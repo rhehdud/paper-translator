@@ -5,6 +5,7 @@
 """
 import argparse
 import datetime
+import io
 import json
 import re
 import sys
@@ -15,6 +16,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import yaml
+from pypdf import PdfReader
 
 ARXIV_API = "https://export.arxiv.org/api/query"
 HF_DAILY_PAPERS_API = "https://huggingface.co/api/daily_papers"
@@ -87,21 +89,47 @@ def fetch_hf_upvotes(window_days: int) -> dict[str, int]:
     return upvotes
 
 
-def select_paper(candidates: list[dict], upvotes: dict[str, int], exclude_ids: set[str]) -> dict | None:
-    pool = [c for c in candidates if c["id"] not in exclude_ids]
-    if not pool:
-        return None
+def get_page_count(pdf_url: str) -> int:
+    data = _http_get(pdf_url)
+    return len(PdfReader(io.BytesIO(data)).pages)
 
-    matched = [c for c in pool if c["id"] in upvotes]
-    if matched:
-        best = max(matched, key=lambda c: upvotes[c["id"]])
-        best["selection_reason"] = f"hf_daily_papers_upvotes={upvotes[best['id']]}"
+
+def select_paper(
+    candidates: list[dict], upvotes: dict[str, int], exclude_ids: set[str], max_pages: int
+) -> dict | None:
+    """제외 목록을 뺀 후보 중 1등을 고르되, 페이지 상한을 넘으면 다음 후보로 넘어간다."""
+    pool = [c for c in candidates if c["id"] not in exclude_ids]
+
+    while pool:
+        matched = [c for c in pool if c["id"] in upvotes]
+        if matched:
+            best = max(matched, key=lambda c: upvotes[c["id"]])
+            reason = f"hf_daily_papers_upvotes={upvotes[best['id']]}"
+        else:
+            # HF Daily Papers에 없으면 최신 제출 논문으로 폴백 (candidates는 이미 최신순 정렬)
+            best = pool[0]
+            reason = "fallback_most_recent"
+
+        try:
+            num_pages = get_page_count(best["pdf_url"])
+        except Exception as e:
+            print(f"페이지 수 확인 실패, 다음 후보로: {best['id']} ({e})", file=sys.stderr)
+            pool = [c for c in pool if c["id"] != best["id"]]
+            continue
+
+        if num_pages > max_pages:
+            print(
+                f"건너뜀(선정 단계): {best['id']}은 {num_pages}페이지로 상한({max_pages}) 초과, 다음 후보로",
+                file=sys.stderr,
+            )
+            pool = [c for c in pool if c["id"] != best["id"]]
+            continue
+
+        best["selection_reason"] = reason
+        best["num_pages"] = num_pages
         return best
 
-    # HF Daily Papers에 없으면 최신 제출 논문으로 폴백 (candidates는 이미 최신순 정렬)
-    best = pool[0]
-    best["selection_reason"] = "fallback_most_recent"
-    return best
+    return None
 
 
 def load_published_ids(docs_dir: str) -> set[str]:
@@ -136,13 +164,15 @@ def select_all_categories(config: dict) -> dict[str, dict]:
     chosen_ids: set[str] = load_published_ids(docs_dir)
     print(f"기존 발행 논문 {len(chosen_ids)}편을 제외 대상으로 로드", file=sys.stderr)
 
+    max_pages = config["extraction"]["max_pages"]
+
     results: dict[str, dict] = {}
     for cat in config["categories"]:
         code = cat["code"]
         candidates = fetch_arxiv_candidates(code, window_days, pool_size)
-        selected = select_paper(candidates, upvotes, chosen_ids)
+        selected = select_paper(candidates, upvotes, chosen_ids, max_pages)
         if selected is None:
-            print(f"[{code}] 후보 없음 (전부 다른 분야와 중복되었거나 기간 내 제출이 없음)", file=sys.stderr)
+            print(f"[{code}] 후보 없음 (전부 중복/페이지 초과이거나 기간 내 제출이 없음)", file=sys.stderr)
             continue
         selected["category"] = code
         chosen_ids.add(selected["id"])
