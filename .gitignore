@@ -1,0 +1,18 @@
+site/
+work/
+selected/
+__pycache__/
+*.pyc
+.DS_Store
+.claude/
+
+# 이전 실험 파일들 (paper-translator 파이프라인과 무관)
+test.py
+test2.py
+test3.py
+test4.py
+test5.py
+parsed_output/
+prompt/
+korean_translated.md
+wiki/

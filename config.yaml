@@ -1,0 +1,46 @@
+# 논문 번역·아카이브 봇 설정
+
+categories:
+  - code: cs.CL
+    name: NLP
+  - code: cs.CV
+    name: Vision
+  - code: cs.LG
+    name: ML
+  - code: cs.AI
+    name: AI General
+  - code: cs.RO
+    name: Robotics
+
+papers_per_category: 1
+
+# 최근 며칠 내 제출된 논문을 후보로 볼지
+candidate_window_days: 7
+
+# arXiv 후보 중 상위 몇 편까지 조회해서 HF Daily Papers와 대조할지
+candidate_pool_size: 20
+
+selection:
+  # primary: HF Daily Papers에 업보트로 등재된 후보 중 최고 업보트
+  # fallback: 매칭되는 후보가 없으면 최신 제출 논문
+  method: hf_daily_papers_upvotes_with_recency_fallback
+
+extraction:
+  # 로컬에서 검증된 버전 고정 (최신 버전은 llama-server 바이너리를 요구해 GH Actions에서 실패함)
+  marker_pdf_version: "1.10.2"
+  # 극단적으로 긴 논문(서베이 등)은 잡 시간 폭주를 막기 위해 상한
+  max_pages: 60
+
+translation:
+  provider: nvidia_nim
+  base_url: https://integrate.api.nvidia.com/v1
+  model: google/gemma-4-31b-it
+  temperature: 0.2
+  system_prompt_file: prompts/translate_system.md
+
+publish:
+  docs_dir: docs
+  site_name: "논문을읽어요"
+
+notify:
+  discord_webhook_env: DISCORD_WEBHOOK_URL

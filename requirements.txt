@@ -1,0 +1,4 @@
+pyyaml
+pypdf
+openai
+marker-pdf==1.10.2

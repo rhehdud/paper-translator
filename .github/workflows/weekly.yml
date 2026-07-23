@@ -1,0 +1,158 @@
+name: Weekly paper translation
+
+on:
+  schedule:
+    - cron: "0 0 * * 1" # 매주 월요일 00:00 UTC
+  workflow_dispatch: {}
+
+concurrency:
+  group: weekly-paper-translation
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    outputs:
+      categories: ${{ steps.list.outputs.categories }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements-collect.txt
+
+      - run: python src/collect.py --out-dir selected
+
+      - id: list
+        run: |
+          python3 -c "
+          import json, os
+          files = sorted(os.listdir('selected'))
+          cats = [f.replace('selected_', '').replace('.json', '') for f in files]
+          print('categories=' + json.dumps(cats))
+          " >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: selected-papers
+          path: selected/
+
+  process:
+    needs: collect
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        category: ${{ fromJson(needs.collect.outputs.categories) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: selected-papers
+          path: selected/
+
+      - name: Cache marker/surya models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/datalab
+          key: marker-models-${{ runner.os }}
+
+      - run: pip install -r requirements.txt
+
+      - name: Extract (Marker)
+        run: |
+          python src/extract.py \
+            --selected "selected/selected_${{ matrix.category }}.json" \
+            --work-dir "work/${{ matrix.category }}" \
+            --out "work/${{ matrix.category }}/extracted.md"
+
+      - name: Translate (NVIDIA NIM)
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          python src/translate.py \
+            --input "work/${{ matrix.category }}/extracted.md" \
+            --output "work/${{ matrix.category }}/translated.md"
+
+      - name: Publish to docs/
+        run: |
+          python src/publish.py \
+            --selected "selected/selected_${{ matrix.category }}.json" \
+            --translated "work/${{ matrix.category }}/translated.md" \
+            --docs-dir docs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: "docs-${{ matrix.category }}"
+          path: docs/
+
+  publish_site:
+    needs: [collect, process]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: docs-*
+          path: downloaded_docs
+          merge-multiple: true
+
+      - name: Merge generated pages into docs/
+        run: cp -r downloaded_docs/* docs/
+
+      - name: Commit translated docs
+        run: |
+          git config user.name "paper-translator-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add docs
+          git commit -m "docs: weekly papers $(date -u +%Y-%m-%d)" || echo "커밋할 변경 없음"
+          git push
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements-docs.txt
+
+      - run: mkdocs build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: selected-papers
+          path: selected/
+
+      - name: Notify Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python src/notify.py \
+            --selected selected/*.json \
+            --site-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
+
+  deploy_pages:
+    needs: publish_site
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
