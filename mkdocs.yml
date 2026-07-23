@@ -1,4 +1,4 @@
-site_name: 논문을읽어요
+site_name: 논문을 읽어요
 site_description: arXiv 논문을 매주 자동으로 골라 한국어 전문 번역으로 아카이브합니다.
 theme:
   name: material
