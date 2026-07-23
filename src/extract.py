@@ -11,6 +11,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
+import yaml
 from pypdf import PdfReader
 
 
@@ -31,15 +32,8 @@ def download_pdf(pdf_url: str, dest: Path) -> None:
         shutil.copyfileobj(resp, out)
 
 
-def check_page_count(pdf_path: Path, max_pages: int) -> int:
-    num_pages = len(PdfReader(str(pdf_path)).pages)
-    if num_pages > max_pages:
-        print(
-            f"경고: {pdf_path.name}은 {num_pages}페이지로 max_pages({max_pages})를 초과합니다. "
-            "잡 시간이 오래 걸릴 수 있습니다.",
-            file=sys.stderr,
-        )
-    return num_pages
+def count_pages(pdf_path: Path) -> int:
+    return len(PdfReader(str(pdf_path)).pages)
 
 
 def run_marker(pdf_path: Path, output_dir: Path) -> Path:
@@ -65,9 +59,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--selected", required=True, help="collect.py가 만든 논문 1편의 JSON")
     parser.add_argument("--work-dir", required=True, help="PDF·마커 출력물을 둘 작업 디렉터리")
-    parser.add_argument("--max-pages", type=int, default=60)
+    parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--max-pages", type=int, default=None, help="지정 안 하면 config.yaml의 extraction.max_pages를 씀")
     parser.add_argument("--out", required=True, help="최종 마크다운을 저장할 경로")
     args = parser.parse_args()
+
+    if args.max_pages is None:
+        with open(args.config, encoding="utf-8") as f:
+            args.max_pages = yaml.safe_load(f)["extraction"]["max_pages"]
 
     with open(args.selected, encoding="utf-8") as f:
         paper = json.load(f)
@@ -78,7 +77,14 @@ def main() -> None:
     pdf_path = work_dir / f"{paper['id']}.pdf"
     download_pdf(paper["pdf_url"], pdf_path)
 
-    check_page_count(pdf_path, args.max_pages)
+    num_pages = count_pages(pdf_path)
+    if num_pages > args.max_pages:
+        print(
+            f"건너뜀: {pdf_path.name}은 {num_pages}페이지로 max_pages({args.max_pages})를 초과합니다. "
+            "이 논문은 이번 주 번역 대상에서 제외합니다.",
+            file=sys.stderr,
+        )
+        return
 
     md_path = run_marker(pdf_path, work_dir)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)

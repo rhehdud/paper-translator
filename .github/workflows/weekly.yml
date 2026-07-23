@@ -82,9 +82,11 @@ jobs:
             --out "work/${{ matrix.category }}/extracted.md"
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: "extracted-${{ matrix.category }}"
           path: "work/${{ matrix.category }}/extracted.md"
+          if-no-files-found: ignore # max_pages 초과로 건너뛴 경우 파일이 없을 수 있음
 
   # 번역은 NVIDIA API 키 하나를 공유하는 작업이라 병렬화해봐야 서로 부딪히기만 한다.
   # 잡 하나로 모아서 분야를 순서대로(for 루프) 하나씩 처리한다.
@@ -115,22 +117,24 @@ jobs:
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
+          rm -rf data/last_run
+          mkdir -p data/last_run
           for category in $(echo '${{ needs.collect.outputs.categories }}' | python3 -c "import json,sys; print('\n'.join(json.load(sys.stdin)))"); do
+            extracted_file="extracted/extracted-${category}/extracted.md"
+            if [ ! -f "$extracted_file" ]; then
+              echo "=== $category: 추출 결과 없음(페이지 상한 초과 등으로 건너뜀), 번역도 건너뜀 ==="
+              continue
+            fi
             echo "=== $category 번역 시작 ==="
             python src/translate.py \
-              --input "extracted/extracted-${category}/extracted.md" \
+              --input "$extracted_file" \
               --output "work/${category}/translated.md"
             python src/publish.py \
               --selected "selected/selected_${category}.json" \
               --translated "work/${category}/translated.md" \
               --docs-dir docs
+            cp "selected/selected_${category}.json" data/last_run/
           done
-
-      - name: Record this run's selection for the Monday notify workflow
-        run: |
-          rm -rf data/last_run
-          mkdir -p data/last_run
-          cp selected/*.json data/last_run/
           date -u +%Y-%m-%dT%H:%M:%SZ > data/last_run/generated_at.txt
 
       - name: Commit translated docs
