@@ -1,0 +1,101 @@
+name: Translate & publish papers
+
+on:
+  workflow_run:
+    workflows: ["Weekly paper processing"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "번역할 대상 'Weekly paper processing' 실행 ID (비우면 가장 최근 성공 실행)"
+        required: false
+
+concurrency:
+  group: translate-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read # 다른 워크플로 실행의 아티팩트를 gh run download로 받아오려면 필요 (자동 발급)
+
+jobs:
+  translate:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # GitHub 호스팅 러너 잡의 플랫폼 하드 리밋(6시간)까지 최대한 여유
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-translate.txt
+
+      - run: pip install -r requirements-translate.txt
+
+      - name: 대상 추출 실행 ID 확인
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id="${{ github.event.inputs.run_id }}"
+          if [ -z "$run_id" ]; then
+            if [ "${{ github.event_name }}" = "workflow_run" ]; then
+              run_id="${{ github.event.workflow_run.id }}"
+            else
+              run_id=$(gh run list --workflow "weekly.yml" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+            fi
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "번역 대상 추출 실행: $run_id"
+
+      - name: 추출 아티팩트 전부 내려받기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p selected extracted
+          gh run download "${{ steps.source.outputs.run_id }}" --name selected-papers --dir selected
+
+          gh api "repos/${{ github.repository }}/actions/runs/${{ steps.source.outputs.run_id }}/artifacts" --paginate \
+            --jq '.artifacts[].name' | grep '^extracted-' | while read -r artifact_name; do
+            category="${artifact_name#extracted-}"
+            gh run download "${{ steps.source.outputs.run_id }}" --name "$artifact_name" --dir "extracted/${category}"
+          done
+
+      - name: 분야별 순차 번역·발행
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          rm -rf data/last_run
+          mkdir -p data/last_run
+
+          for selected_file in selected/selected_*.json; do
+            [ -e "$selected_file" ] || continue
+            category=$(basename "$selected_file" .json | sed 's/^selected_//')
+            extracted_file="extracted/${category}/extracted.md"
+
+            if [ -f "$extracted_file" ]; then
+              echo "=== [$category] 번역 시작 ==="
+              # 번역본도 같은 폴더에 써서, 이미지가 옆에 그대로 남아있게 함
+              python src/translate.py --input "$extracted_file" --output "extracted/${category}/translated.md"
+              python src/publish.py \
+                --selected "$selected_file" \
+                --translated "extracted/${category}/translated.md" \
+                --source-dir "extracted/${category}" \
+                --docs-dir docs
+              cp "$selected_file" data/last_run/
+            else
+              echo "=== [$category] 추출 결과 없음(페이지 상한 초과 등으로 건너뜀) ==="
+            fi
+          done
+
+          date -u +%Y-%m-%dT%H:%M:%SZ > data/last_run/generated_at.txt
+
+      - name: Commit translated docs
+        run: |
+          git config user.name "paper-translator-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add docs data/last_run
+          git commit -m "docs: weekly papers $(date -u +%Y-%m-%d)" || echo "커밋할 변경 없음"
+          git push

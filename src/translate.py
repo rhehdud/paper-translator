@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 
+import httpx
 import yaml
 from openai import OpenAI
 
@@ -36,6 +37,15 @@ def chunk_markdown(text: str, max_chars: int) -> list[str]:
     return chunks
 
 
+def _split_in_half(chunk: str) -> tuple[str, str] | None:
+    """문단(빈 줄) 경계를 기준으로 청크를 절반씩 나눈다. 문단이 하나뿐이면 나눌 수 없다."""
+    paragraphs = chunk.split("\n\n")
+    if len(paragraphs) < 2:
+        return None
+    mid = len(paragraphs) // 2
+    return "\n\n".join(paragraphs[:mid]), "\n\n".join(paragraphs[mid:])
+
+
 def translate_chunk(
     client: OpenAI, model: str, system_prompt: str, temperature: float, chunk: str, max_retries: int = 5
 ) -> str:
@@ -51,7 +61,24 @@ def translate_chunk(
                 # thinking을 켜두면 답변마다 긴 추론 과정을 먼저 생성해 훨씬 느려진다.
                 extra_body={"chat_template_kwargs": {"enable_thinking": False}},
             )
-            return resp.choices[0].message.content or ""
+            content = resp.choices[0].message.content or ""
+            if resp.choices[0].finish_reason == "length":
+                # 모델 컨텍스트 한도에 걸려 응답이 중간에 잘림 -- 그대로 쓰면 "축소·요약 금지"
+                # 원칙이 조용히 깨지므로, 절대 그대로 반환하지 않고 청크를 반으로 쪼개 재번역한다.
+                halves = _split_in_half(chunk)
+                if halves is None:
+                    raise RuntimeError("응답이 컨텍스트 한도로 잘렸는데 더 이상 쪼갤 수 없는 단일 문단입니다")
+                print(
+                    f"번역 응답이 컨텍스트 한도로 잘림 ({len(chunk)}자 청크) -- 절반으로 나눠 재번역",
+                    file=sys.stderr,
+                )
+                first, second = halves
+                return (
+                    translate_chunk(client, model, system_prompt, temperature, first, max_retries)
+                    + "\n\n"
+                    + translate_chunk(client, model, system_prompt, temperature, second, max_retries)
+                )
+            return content
         except Exception as e:
             wait = min(60, 2**attempt)
             cause = e.__cause__ or e.__context__
@@ -80,7 +107,12 @@ def main() -> None:
     # 90초는 너무 짧아서 정상적으로 느린(수 분 걸리는) 응답까지 타임아웃으로 죽였다.
     # 5분으로 늘리되, SDK 자체 재시도(기본 max_retries=2)는 꺼서 아래 translate_chunk의
     # 재시도 루프와 중첩되어 한 청크가 몇 시간씩 멎는 것만 막는다.
-    client = OpenAI(base_url=config["base_url"], api_key=api_key, timeout=300.0, max_retries=0)
+    # keep-alive 연결 재사용을 꺼서, 청크 사이 유휴 시간에 서버(프록시)가 먼저 끊어버린
+    # 연결을 재사용하다 "Server disconnected without sending a response"가 나는 걸 막는다.
+    http_client = httpx.Client(limits=httpx.Limits(max_keepalive_connections=0))
+    client = OpenAI(
+        base_url=config["base_url"], api_key=api_key, timeout=300.0, max_retries=0, http_client=http_client
+    )
     system_prompt = load_system_prompt(config["system_prompt_file"])
 
     text = Path(args.input).read_text(encoding="utf-8")

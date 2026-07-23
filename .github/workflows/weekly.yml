@@ -4,7 +4,8 @@ on:
   schedule:
     # 매주 일요일 00:03 KST(=토요일 15:03 UTC) 시작.
     # 월요일 09:00 KST 배포·알림(publish_and_notify.yml)까지 33시간 버퍼를 둬서
-    # 처리 시간(논문 길이에 따라 최대 ~4시간)이 언제 끝나든 영향받지 않게 함.
+    # 처리 시간이 언제 끝나든 영향받지 않게 함.
+    # 이 워크플로가 끝나면 (성공 시) translate.yml이 workflow_run으로 자동으로 이어받아 번역한다.
     - cron: "3 15 * * 6"
   workflow_dispatch: {}
 
@@ -13,8 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  actions: read # translate_consumer 잡이 같은 실행의 아티팩트 목록을 폴링하려면 필요 (자동 발급, 별도 설정 없음)
+  contents: read
 
 jobs:
   collect:
@@ -52,7 +52,7 @@ jobs:
   extract:
     needs: collect
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 360 # GitHub 호스팅 러너 잡의 플랫폼 하드 리밋(6시간)까지 최대한 여유
     strategy:
       fail-fast: false
       matrix:
@@ -95,88 +95,3 @@ jobs:
           name: "extracted-${{ matrix.category }}"
           path: "work/${{ matrix.category }}/output" # 마크다운 + 이미지 전부 (extracted.md만이 아님)
           if-no-files-found: ignore # max_pages 초과로 건너뛴 경우 파일이 없을 수 있음
-
-  # 번역은 NVIDIA API 키 하나를 공유하는 작업이라 5개가 한꺼번에 부딪히면 안 되지만,
-  # extract 잡 전체가 끝날 때까지 기다릴 필요도 없다. extract는 needs로 기다리지 않고
-  # collect 직후 병렬로 같이 시작해서, extract 매트릭스가 올리는 아티팩트를 큐처럼
-  # 폴링하며 도착한 순서대로 하나씩(직렬) 번역한다.
-  translate_consumer:
-    needs: collect
-    runs-on: ubuntu-latest
-    timeout-minutes: 300
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: requirements-translate.txt
-
-      - run: pip install -r requirements-translate.txt
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: selected-papers
-          path: selected/
-
-      - name: 추출 아티팩트를 큐처럼 폴링하며 도착 순서대로 번역·발행
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          rm -rf data/last_run
-          mkdir -p data/last_run extracted
-
-          pending=($(echo '${{ needs.collect.outputs.categories }}' | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin)))"))
-          echo "대기 중인 분야: ${pending[*]}"
-
-          while [ ${#pending[@]} -gt 0 ]; do
-            available=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" --paginate --jq '.artifacts[].name')
-
-            # extract 잡 자체가 이미 끝났는지 확인 (남은 분야가 영영 안 올 경우 무한 대기 방지)
-            extract_done=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" --paginate \
-              --jq '[.jobs[] | select(.name | startswith("extract (")) | select(.status != "completed")] | length == 0')
-
-            remaining=()
-            for category in "${pending[@]}"; do
-              artifact_name="extracted-${category}"
-              if echo "$available" | grep -qx "$artifact_name"; then
-                echo "=== [$category] 추출 도착, 번역 시작 ==="
-                gh run download "${{ github.run_id }}" --name "$artifact_name" --dir "extracted/${category}"
-                extracted_file="extracted/${category}/extracted.md"
-                if [ -f "$extracted_file" ]; then
-                  # 번역본도 같은 폴더에 써서, 이미지가 옆에 그대로 남아있게 함
-                  python src/translate.py --input "$extracted_file" --output "extracted/${category}/translated.md"
-                  python src/publish.py \
-                    --selected "selected/selected_${category}.json" \
-                    --translated "extracted/${category}/translated.md" \
-                    --source-dir "extracted/${category}" \
-                    --docs-dir docs
-                  cp "selected/selected_${category}.json" data/last_run/
-                else
-                  echo "=== [$category] 추출 결과 없음(페이지 상한 초과 등으로 건너뜀) ==="
-                fi
-              elif [ "$extract_done" = "true" ]; then
-                echo "=== [$category] extract 잡이 끝났는데 아티팩트가 없음 → 건너뜀 ==="
-              else
-                remaining+=("$category")
-              fi
-            done
-            pending=("${remaining[@]}")
-
-            if [ ${#pending[@]} -gt 0 ]; then
-              echo "아직 대기 중: ${pending[*]} (30초 후 다시 확인)"
-              sleep 30
-            fi
-          done
-
-          date -u +%Y-%m-%dT%H:%M:%SZ > data/last_run/generated_at.txt
-
-      - name: Commit translated docs
-        run: |
-          git config user.name "paper-translator-bot"
-          git config user.email "bot@users.noreply.github.com"
-          git add docs data/last_run
-          git commit -m "docs: weekly papers $(date -u +%Y-%m-%d)" || echo "커밋할 변경 없음"
-          git push
