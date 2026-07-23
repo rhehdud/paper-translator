@@ -12,6 +12,7 @@ import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import yaml
 
@@ -103,14 +104,39 @@ def select_paper(candidates: list[dict], upvotes: dict[str, int], exclude_ids: s
     return best
 
 
+def load_published_ids(docs_dir: str) -> set[str]:
+    """지난주까지 이미 발행된 논문의 arXiv ID를 docs/ 프런트매터에서 읽어온다 (주 간 중복 방지)."""
+    published: set[str] = set()
+    root = Path(docs_dir)
+    if not root.exists():
+        return published
+    for md_file in root.rglob("*.md"):
+        with open(md_file, encoding="utf-8") as f:
+            frontmatter_dashes = 0
+            for line in f:
+                line = line.strip()
+                if line == "---":
+                    frontmatter_dashes += 1
+                    if frontmatter_dashes >= 2:
+                        break
+                    continue
+                if line.startswith("arxiv_id:"):
+                    published.add(line.split(":", 1)[1].strip())
+                    break
+    return published
+
+
 def select_all_categories(config: dict) -> dict[str, dict]:
-    """분야별로 1편씩, 이미 다른 분야에서 뽑힌 논문(cross-list 중복)은 제외하고 선정한다."""
+    """분야별로 1편씩, 이미 다른 분야/지난주에 뽑힌 논문은 제외하고 선정한다."""
     window_days = config["candidate_window_days"]
     pool_size = config["candidate_pool_size"]
     upvotes = fetch_hf_upvotes(window_days)
 
+    docs_dir = config.get("publish", {}).get("docs_dir", "docs")
+    chosen_ids: set[str] = load_published_ids(docs_dir)
+    print(f"기존 발행 논문 {len(chosen_ids)}편을 제외 대상으로 로드", file=sys.stderr)
+
     results: dict[str, dict] = {}
-    chosen_ids: set[str] = set()
     for cat in config["categories"]:
         code = cat["code"]
         candidates = fetch_arxiv_candidates(code, window_days, pool_size)
