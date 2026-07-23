@@ -54,7 +54,9 @@ def translate_chunk(
             return resp.choices[0].message.content or ""
         except Exception as e:
             wait = min(60, 2**attempt)
-            print(f"번역 실패 (시도 {attempt + 1}/{max_retries}): {e} -- {wait}초 후 재시도", file=sys.stderr)
+            cause = e.__cause__ or e.__context__
+            detail = f"{type(e).__name__}: {e}" + (f" | 원인: {type(cause).__name__}: {cause}" if cause else "")
+            print(f"번역 실패 (시도 {attempt + 1}/{max_retries}): {detail} -- {wait}초 후 재시도", file=sys.stderr)
             time.sleep(wait)
     raise RuntimeError("번역 재시도 한도를 초과했습니다")
 
