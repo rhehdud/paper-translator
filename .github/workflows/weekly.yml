@@ -87,13 +87,13 @@ jobs:
           python src/extract.py \
             --selected "selected/selected_${{ matrix.category }}.json" \
             --work-dir "work/${{ matrix.category }}" \
-            --out "work/${{ matrix.category }}/extracted.md"
+            --out-dir "work/${{ matrix.category }}/output"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: "extracted-${{ matrix.category }}"
-          path: "work/${{ matrix.category }}/extracted.md"
+          path: "work/${{ matrix.category }}/output" # 마크다운 + 이미지 전부 (extracted.md만이 아님)
           if-no-files-found: ignore # max_pages 초과로 건너뛴 경우 파일이 없을 수 있음
 
   # 번역은 NVIDIA API 키 하나를 공유하는 작업이라 5개가 한꺼번에 부딪히면 안 되지만,
@@ -146,10 +146,12 @@ jobs:
                 gh run download "${{ github.run_id }}" --name "$artifact_name" --dir "extracted/${category}"
                 extracted_file="extracted/${category}/extracted.md"
                 if [ -f "$extracted_file" ]; then
-                  python src/translate.py --input "$extracted_file" --output "work/${category}/translated.md"
+                  # 번역본도 같은 폴더에 써서, 이미지가 옆에 그대로 남아있게 함
+                  python src/translate.py --input "$extracted_file" --output "extracted/${category}/translated.md"
                   python src/publish.py \
                     --selected "selected/selected_${category}.json" \
-                    --translated "work/${category}/translated.md" \
+                    --translated "extracted/${category}/translated.md" \
+                    --source-dir "extracted/${category}" \
                     --docs-dir docs
                   cp "selected/selected_${category}.json" data/last_run/
                 else

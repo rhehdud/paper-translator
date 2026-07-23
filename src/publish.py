@@ -6,6 +6,7 @@
 import argparse
 import json
 import re
+import shutil
 from datetime import date
 from pathlib import Path
 
@@ -17,10 +18,34 @@ CATEGORY_DIR_NAMES = {
     "cs.RO": "robotics",
 }
 
+IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".gif", ".webp", ".svg"}
+IMAGE_REF_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
+
 
 def slugify(text: str, max_len: int = 60) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
     return slug[:max_len].rstrip("-")
+
+
+def copy_images_and_rewrite_refs(translated_body: str, source_dir: Path, page_images_dir: Path) -> str:
+    """source_dir에 있던 이미지 파일들을 page_images_dir로 복사하고, 마크다운의 이미지
+    참조 경로를 그 위치를 가리키도록 다시 쓴다 (다른 논문과 파일명이 겹쳐도 충돌 없게)."""
+    copied: set[str] = set()
+
+    def _rewrite(match: re.Match) -> str:
+        alt, path = match.group(1), match.group(2)
+        if "/" in path or path.startswith(("http://", "https://")):
+            return match.group(0)  # 이미 경로가 있거나 외부 URL이면 손대지 않음
+        src = source_dir / path
+        if Path(path).suffix.lower() not in IMAGE_EXTENSIONS or not src.exists():
+            return match.group(0)
+        if path not in copied:
+            page_images_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy(src, page_images_dir / path)
+            copied.add(path)
+        return f"![{alt}]({page_images_dir.name}/{path})"
+
+    return IMAGE_REF_RE.sub(_rewrite, translated_body)
 
 
 def build_page(paper: dict, translated_body: str) -> str:
@@ -49,6 +74,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--selected", required=True)
     parser.add_argument("--translated", required=True)
+    parser.add_argument("--source-dir", default=None, help="번역본과 같이 있던 이미지 파일들의 원본 위치")
     parser.add_argument("--docs-dir", default="docs")
     args = parser.parse_args()
 
@@ -61,8 +87,13 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     today = date.today().isoformat()
-    filename = f"{today}-{paper['id']}-{slugify(paper['title'])}.md"
-    out_path = out_dir / filename
+    page_stem = f"{today}-{paper['id']}-{slugify(paper['title'])}"
+
+    if args.source_dir:
+        page_images_dir = out_dir / page_stem
+        translated_body = copy_images_and_rewrite_refs(translated_body, Path(args.source_dir), page_images_dir)
+
+    out_path = out_dir / f"{page_stem}.md"
     out_path.write_text(build_page(paper, translated_body), encoding="utf-8")
 
     print(f"발행 완료: {out_path}")

@@ -61,7 +61,7 @@ def main() -> None:
     parser.add_argument("--work-dir", required=True, help="PDF·마커 출력물을 둘 작업 디렉터리")
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--max-pages", type=int, default=None, help="지정 안 하면 config.yaml의 extraction.max_pages를 씀")
-    parser.add_argument("--out", required=True, help="최종 마크다운을 저장할 경로")
+    parser.add_argument("--out-dir", required=True, help="마크다운+이미지를 저장할 디렉터리")
     args = parser.parse_args()
 
     if args.max_pages is None:
@@ -87,9 +87,19 @@ def main() -> None:
         return
 
     md_path = run_marker(pdf_path, work_dir)
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(md_path, args.out)
-    print(f"추출 완료: {args.out}", file=sys.stderr)
+    marker_output_dir = md_path.parent  # Marker가 마크다운과 이미지를 같이 뽑아둔 폴더
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for item in marker_output_dir.iterdir():
+        if item.suffix == ".json":
+            continue  # _meta.json은 필요 없음
+        shutil.copy(item, out_dir / item.name)
+
+    # 마크다운 파일 이름을 다운스트림에서 예측 가능하게 고정
+    (out_dir / md_path.name).rename(out_dir / "extracted.md")
+
+    print(f"추출 완료: {out_dir} (이미지 포함)", file=sys.stderr)
 
 
 if __name__ == "__main__":
