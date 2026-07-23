@@ -33,7 +33,7 @@ _last_arxiv_request_time = 0.0
 
 
 def _arxiv_get(url: str, max_retries: int = 5) -> bytes:
-    """arXiv는 요청 사이 최소 3초 간격을 권장한다. 그래도 429가 오면 backoff 후 재시도한다."""
+    """arXiv는 요청 사이 최소 3초 간격을 권장한다. 429든 타임아웃이든 실패하면 backoff 후 재시도한다."""
     global _last_arxiv_request_time
     for attempt in range(max_retries):
         elapsed = time.monotonic() - _last_arxiv_request_time
@@ -43,12 +43,12 @@ def _arxiv_get(url: str, max_retries: int = 5) -> bytes:
             data = _http_get(url)
             _last_arxiv_request_time = time.monotonic()
             return data
-        except urllib.error.HTTPError as e:
+        except Exception as e:
             _last_arxiv_request_time = time.monotonic()
-            if e.code != 429 or attempt == max_retries - 1:
+            if attempt == max_retries - 1:
                 raise
             wait = min(60, 2 ** (attempt + 2))
-            print(f"arXiv 429(요청 과다), {wait}초 후 재시도: {url}", file=sys.stderr)
+            print(f"arXiv 요청 실패({type(e).__name__}: {e}), {wait}초 후 재시도: {url}", file=sys.stderr)
             time.sleep(wait)
     raise RuntimeError("arXiv 요청 재시도 한도를 초과했습니다")
 
