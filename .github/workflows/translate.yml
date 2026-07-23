@@ -78,7 +78,12 @@ jobs:
             if [ -f "$extracted_file" ]; then
               echo "=== [$category] 번역 시작 ==="
               # 번역본도 같은 폴더에 써서, 이미지가 옆에 그대로 남아있게 함
-              python src/translate.py --input "$extracted_file" --output "extracted/${category}/translated.md"
+              # 이 논문 번역이 재시도까지 다 소진하고 실패해도, 다른 분야까지 통째로
+              # 날리지 않고 이 분야만 건너뛰고 계속 진행한다 (하나라도 성공시키는 게 우선).
+              if ! python src/translate.py --input "$extracted_file" --output "extracted/${category}/translated.md"; then
+                echo "=== [$category] 번역 실패(재시도 소진), 이번 주는 건너뜀 ==="
+                continue
+              fi
               python src/publish.py \
                 --selected "$selected_file" \
                 --translated "extracted/${category}/translated.md" \

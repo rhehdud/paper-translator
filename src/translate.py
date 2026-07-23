@@ -47,7 +47,7 @@ def _split_in_half(chunk: str) -> tuple[str, str] | None:
 
 
 def translate_chunk(
-    client: OpenAI, model: str, system_prompt: str, temperature: float, chunk: str, max_retries: int = 5
+    client: OpenAI, model: str, system_prompt: str, temperature: float, chunk: str, max_retries: int = 12
 ) -> str:
     for attempt in range(max_retries):
         try:
