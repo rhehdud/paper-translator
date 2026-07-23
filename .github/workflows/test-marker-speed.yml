@@ -1,0 +1,40 @@
+name: Test Marker speed on ubuntu-latest
+
+on:
+  push:
+    paths:
+      - "sample.pdf"
+      - ".github/workflows/test-marker-speed.yml"
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache marker/surya models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/datalab
+          key: marker-models-${{ runner.os }}
+
+      - name: Install marker-pdf
+        run: pip install marker-pdf
+
+      - name: Run marker and time it
+        run: |
+          echo "### Marker benchmark (ubuntu-latest, CPU only)" >> "$GITHUB_STEP_SUMMARY"
+          echo "PDF: sample.pdf (6 pages)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          /usr/bin/time -v marker_single sample.pdf --output_dir /tmp/marker_out --output_format markdown 2>&1 | tee /tmp/marker_log.txt
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Wall clock / CPU time:" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E "Elapsed|Total time|User time|System time" /tmp/marker_log.txt >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
