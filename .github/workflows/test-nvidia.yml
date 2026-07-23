@@ -1,0 +1,50 @@
+name: Test NVIDIA NIM connectivity
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install openai
+
+      - name: Call gemma-4-31b-it once with a tiny prompt
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          python3 - <<'EOF'
+          import os, time, traceback
+          from openai import OpenAI
+
+          client = OpenAI(
+              base_url="https://integrate.api.nvidia.com/v1",
+              api_key=os.environ["NVIDIA_API_KEY"],
+              timeout=60.0,
+              max_retries=0,
+          )
+
+          for attempt in range(3):
+              start = time.time()
+              try:
+                  resp = client.chat.completions.create(
+                      model="google/gemma-4-31b-it",
+                      messages=[{"role": "user", "content": "Say 'ok' and nothing else."}],
+                      temperature=0.0,
+                      extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                  )
+                  print(f"[시도 {attempt+1}] 성공, {time.time()-start:.1f}초 걸림")
+                  print("응답:", resp.choices[0].message.content)
+                  break
+              except Exception as e:
+                  cause = e.__cause__ or e.__context__
+                  print(f"[시도 {attempt+1}] 실패, {time.time()-start:.1f}초 만에: {type(e).__name__}: {e}")
+                  if cause:
+                      print("  원인:", type(cause).__name__, cause)
+                  traceback.print_exc()
+                  time.sleep(3)
+          EOF
