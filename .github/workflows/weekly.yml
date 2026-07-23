@@ -1,18 +1,19 @@
-name: Weekly paper translation
+name: Weekly paper processing
 
 on:
   schedule:
-    - cron: "0 0 * * 1" # 매주 월요일 00:00 UTC
+    # 매주 일요일 00:03 KST(=토요일 15:03 UTC) 시작.
+    # 월요일 09:00 KST 배포·알림(publish_and_notify.yml)까지 33시간 버퍼를 둬서
+    # 처리 시간(논문 길이에 따라 최대 ~4시간)이 언제 끝나든 영향받지 않게 함.
+    - cron: "3 15 * * 6"
   workflow_dispatch: {}
 
 concurrency:
-  group: weekly-paper-translation
+  group: weekly-paper-processing
   cancel-in-progress: false
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 jobs:
   collect:
@@ -99,7 +100,7 @@ jobs:
           name: "docs-${{ matrix.category }}"
           path: docs/
 
-  publish_site:
+  commit_docs:
     needs: [collect, process]
     runs-on: ubuntu-latest
     steps:
@@ -114,45 +115,22 @@ jobs:
       - name: Merge generated pages into docs/
         run: cp -r downloaded_docs/* docs/
 
-      - name: Commit translated docs
-        run: |
-          git config user.name "paper-translator-bot"
-          git config user.email "bot@users.noreply.github.com"
-          git add docs
-          git commit -m "docs: weekly papers $(date -u +%Y-%m-%d)" || echo "커밋할 변경 없음"
-          git push
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - run: pip install -r requirements-docs.txt
-
-      - run: mkdocs build
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
-
       - uses: actions/download-artifact@v4
         with:
           name: selected-papers
           path: selected/
 
-      - name: Notify Discord
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      - name: Record this run's selection for the Monday notify workflow
         run: |
-          python src/notify.py \
-            --selected selected/*.json \
-            --site-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
+          rm -rf data/last_run
+          mkdir -p data/last_run
+          cp selected/*.json data/last_run/
+          date -u +%Y-%m-%dT%H:%M:%SZ > data/last_run/generated_at.txt
 
-  deploy_pages:
-    needs: publish_site
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Commit translated docs
+        run: |
+          git config user.name "paper-translator-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add docs data/last_run
+          git commit -m "docs: weekly papers $(date -u +%Y-%m-%d)" || echo "커밋할 변경 없음"
+          git push

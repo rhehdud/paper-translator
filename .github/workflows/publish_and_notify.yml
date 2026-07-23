@@ -1,0 +1,56 @@
+name: Publish site & notify
+
+on:
+  schedule:
+    # 매주 월요일 09:03 KST(=00:03 UTC) 고정 실행.
+    # weekly.yml(처리)이 언제 끝났든 상관없이, 이 시점의 리포 상태(이미 커밋된 번역 문서)를
+    # 그대로 배포하고 알림을 보낸다.
+    - cron: "3 0 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements-docs.txt
+
+      - run: mkdocs build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build_deploy
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Notify Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python3 src/notify.py \
+            --selected data/last_run/*.json \
+            --generated-at-file data/last_run/generated_at.txt \
+            --site-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
