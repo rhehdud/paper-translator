@@ -14,6 +14,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: read # translate_consumer 잡이 같은 실행의 아티팩트 목록을 폴링하려면 필요 (자동 발급, 별도 설정 없음)
 
 jobs:
   collect:
@@ -95,12 +96,14 @@ jobs:
           path: "work/${{ matrix.category }}/extracted.md"
           if-no-files-found: ignore # max_pages 초과로 건너뛴 경우 파일이 없을 수 있음
 
-  # 번역은 NVIDIA API 키 하나를 공유하는 작업이라 병렬화해봐야 서로 부딪히기만 한다.
-  # 잡 하나로 모아서 분야를 순서대로(for 루프) 하나씩 처리한다.
-  translate_and_publish:
-    needs: [collect, extract]
+  # 번역은 NVIDIA API 키 하나를 공유하는 작업이라 5개가 한꺼번에 부딪히면 안 되지만,
+  # extract 잡 전체가 끝날 때까지 기다릴 필요도 없다. extract는 needs로 기다리지 않고
+  # collect 직후 병렬로 같이 시작해서, extract 매트릭스가 올리는 아티팩트를 큐처럼
+  # 폴링하며 도착한 순서대로 하나씩(직렬) 번역한다.
+  translate_consumer:
+    needs: collect
     runs-on: ubuntu-latest
-    timeout-minutes: 180 # 청크 하나가 (5분 타임아웃 x 최대 5회 재시도)까지 걸릴 수 있어 여유를 둠
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
 
@@ -117,33 +120,55 @@ jobs:
           name: selected-papers
           path: selected/
 
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: extracted-*
-          path: extracted/
-
-      - name: Translate & publish each category sequentially
+      - name: 추출 아티팩트를 큐처럼 폴링하며 도착 순서대로 번역·발행
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           rm -rf data/last_run
-          mkdir -p data/last_run
-          for category in $(echo '${{ needs.collect.outputs.categories }}' | python3 -c "import json,sys; print('\n'.join(json.load(sys.stdin)))"); do
-            extracted_file="extracted/extracted-${category}/extracted.md"
-            if [ ! -f "$extracted_file" ]; then
-              echo "=== $category: 추출 결과 없음(페이지 상한 초과 등으로 건너뜀), 번역도 건너뜀 ==="
-              continue
+          mkdir -p data/last_run extracted
+
+          pending=($(echo '${{ needs.collect.outputs.categories }}' | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin)))"))
+          echo "대기 중인 분야: ${pending[*]}"
+
+          while [ ${#pending[@]} -gt 0 ]; do
+            available=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" --paginate --jq '.artifacts[].name')
+
+            # extract 잡 자체가 이미 끝났는지 확인 (남은 분야가 영영 안 올 경우 무한 대기 방지)
+            extract_done=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" --paginate \
+              --jq '[.jobs[] | select(.name | startswith("extract (")) | select(.status != "completed")] | length == 0')
+
+            remaining=()
+            for category in "${pending[@]}"; do
+              artifact_name="extracted-${category}"
+              if echo "$available" | grep -qx "$artifact_name"; then
+                echo "=== [$category] 추출 도착, 번역 시작 ==="
+                gh run download "${{ github.run_id }}" --name "$artifact_name" --dir "extracted/${category}"
+                extracted_file="extracted/${category}/extracted.md"
+                if [ -f "$extracted_file" ]; then
+                  python src/translate.py --input "$extracted_file" --output "work/${category}/translated.md"
+                  python src/publish.py \
+                    --selected "selected/selected_${category}.json" \
+                    --translated "work/${category}/translated.md" \
+                    --docs-dir docs
+                  cp "selected/selected_${category}.json" data/last_run/
+                else
+                  echo "=== [$category] 추출 결과 없음(페이지 상한 초과 등으로 건너뜀) ==="
+                fi
+              elif [ "$extract_done" = "true" ]; then
+                echo "=== [$category] extract 잡이 끝났는데 아티팩트가 없음 → 건너뜀 ==="
+              else
+                remaining+=("$category")
+              fi
+            done
+            pending=("${remaining[@]}")
+
+            if [ ${#pending[@]} -gt 0 ]; then
+              echo "아직 대기 중: ${pending[*]} (30초 후 다시 확인)"
+              sleep 30
             fi
-            echo "=== $category 번역 시작 ==="
-            python src/translate.py \
-              --input "$extracted_file" \
-              --output "work/${category}/translated.md"
-            python src/publish.py \
-              --selected "selected/selected_${category}.json" \
-              --translated "work/${category}/translated.md" \
-              --docs-dir docs
-            cp "selected/selected_${category}.json" data/last_run/
           done
+
           date -u +%Y-%m-%dT%H:%M:%SZ > data/last_run/generated_at.txt
 
       - name: Commit translated docs
