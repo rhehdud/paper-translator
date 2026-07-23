@@ -29,6 +29,30 @@ def _http_get(url: str) -> bytes:
         return resp.read()
 
 
+_last_arxiv_request_time = 0.0
+
+
+def _arxiv_get(url: str, max_retries: int = 5) -> bytes:
+    """arXiv는 요청 사이 최소 3초 간격을 권장한다. 그래도 429가 오면 backoff 후 재시도한다."""
+    global _last_arxiv_request_time
+    for attempt in range(max_retries):
+        elapsed = time.monotonic() - _last_arxiv_request_time
+        if elapsed < 3.0:
+            time.sleep(3.0 - elapsed)
+        try:
+            data = _http_get(url)
+            _last_arxiv_request_time = time.monotonic()
+            return data
+        except urllib.error.HTTPError as e:
+            _last_arxiv_request_time = time.monotonic()
+            if e.code != 429 or attempt == max_retries - 1:
+                raise
+            wait = min(60, 2 ** (attempt + 2))
+            print(f"arXiv 429(요청 과다), {wait}초 후 재시도: {url}", file=sys.stderr)
+            time.sleep(wait)
+    raise RuntimeError("arXiv 요청 재시도 한도를 초과했습니다")
+
+
 def fetch_arxiv_candidates(category: str, window_days: int, pool_size: int) -> list[dict]:
     query = urllib.parse.urlencode(
         {
@@ -38,7 +62,7 @@ def fetch_arxiv_candidates(category: str, window_days: int, pool_size: int) -> l
             "max_results": pool_size,
         }
     )
-    xml_bytes = _http_get(f"{ARXIV_API}?{query}")
+    xml_bytes = _arxiv_get(f"{ARXIV_API}?{query}")
     root = ET.fromstring(xml_bytes)
 
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=window_days)
@@ -90,7 +114,7 @@ def fetch_hf_upvotes(window_days: int) -> dict[str, int]:
 
 
 def get_page_count(pdf_url: str) -> int:
-    data = _http_get(pdf_url)
+    data = _arxiv_get(pdf_url)
     return len(PdfReader(io.BytesIO(data)).pages)
 
 
