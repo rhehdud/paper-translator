@@ -93,7 +93,7 @@ jobs:
   translate_and_publish:
     needs: [collect, extract]
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180 # 청크 하나가 (5분 타임아웃 x 최대 5회 재시도)까지 걸릴 수 있어 여유를 둠
     steps:
       - uses: actions/checkout@v4
 

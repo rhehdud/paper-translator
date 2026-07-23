@@ -75,9 +75,10 @@ def main() -> None:
     if not api_key:
         raise SystemExit("환경변수 NVIDIA_API_KEY가 설정되어 있지 않습니다")
 
-    # timeout을 짧게 명시하고 SDK 자체 재시도(기본 max_retries=2)는 꺼서,
-    # 아래 translate_chunk의 자체 재시도 루프와 중첩되어 한 청크가 오래 멎는 걸 방지한다.
-    client = OpenAI(base_url=config["base_url"], api_key=api_key, timeout=90.0, max_retries=0)
+    # 90초는 너무 짧아서 정상적으로 느린(수 분 걸리는) 응답까지 타임아웃으로 죽였다.
+    # 5분으로 늘리되, SDK 자체 재시도(기본 max_retries=2)는 꺼서 아래 translate_chunk의
+    # 재시도 루프와 중첩되어 한 청크가 몇 시간씩 멎는 것만 막는다.
+    client = OpenAI(base_url=config["base_url"], api_key=api_key, timeout=300.0, max_retries=0)
     system_prompt = load_system_prompt(config["system_prompt_file"])
 
     text = Path(args.input).read_text(encoding="utf-8")
