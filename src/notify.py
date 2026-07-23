@@ -37,7 +37,12 @@ def build_message(papers: list[dict], site_url: str, warning: str | None = None)
 def send_discord(webhook_url: str, payload: dict) -> None:
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
-        webhook_url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+        webhook_url,
+        data=data,
+        # 기본 User-Agent("Python-urllib/...")는 Discord 앞단 Cloudflare가 봇으로 보고
+        # 403으로 막는 경우가 많아 일반적인 값으로 바꿔준다.
+        headers={"Content-Type": "application/json", "User-Agent": "paper-translator-bot/0.1"},
+        method="POST",
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         resp.read()
