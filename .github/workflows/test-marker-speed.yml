@@ -24,10 +24,11 @@ jobs:
           key: marker-models-${{ runner.os }}
 
       - name: Install marker-pdf
-        run: pip install marker-pdf
+        run: pip install marker-pdf==1.10.2
 
       - name: Run marker and time it
         run: |
+          set -o pipefail
           echo "### Marker benchmark (ubuntu-latest, CPU only)" >> "$GITHUB_STEP_SUMMARY"
           echo "PDF: sample.pdf (6 pages)" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
