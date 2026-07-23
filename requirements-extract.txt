@@ -1,0 +1,2 @@
+pypdf
+marker-pdf==1.10.2

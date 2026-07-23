@@ -45,7 +45,8 @@ jobs:
           name: selected-papers
           path: selected/
 
-  process:
+  # CPU 작업(Marker 추출)은 잡마다 자기 러너만 쓰니 매트릭스 병렬화가 실제로 이득이다.
+  extract:
     needs: collect
     runs-on: ubuntu-latest
     timeout-minutes: 300
@@ -71,7 +72,7 @@ jobs:
           path: ~/.cache/datalab
           key: marker-models-${{ runner.os }}
 
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements-extract.txt
 
       - name: Extract (Marker)
         run: |
@@ -80,45 +81,50 @@ jobs:
             --work-dir "work/${{ matrix.category }}" \
             --out "work/${{ matrix.category }}/extracted.md"
 
-      - name: Translate (NVIDIA NIM)
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-        run: |
-          python src/translate.py \
-            --input "work/${{ matrix.category }}/extracted.md" \
-            --output "work/${{ matrix.category }}/translated.md"
-
-      - name: Publish to docs/
-        run: |
-          python src/publish.py \
-            --selected "selected/selected_${{ matrix.category }}.json" \
-            --translated "work/${{ matrix.category }}/translated.md" \
-            --docs-dir docs
-
       - uses: actions/upload-artifact@v4
         with:
-          name: "docs-${{ matrix.category }}"
-          path: docs/
+          name: "extracted-${{ matrix.category }}"
+          path: "work/${{ matrix.category }}/extracted.md"
 
-  commit_docs:
-    needs: [collect, process]
+  # 번역은 NVIDIA API 키 하나를 공유하는 작업이라 병렬화해봐야 서로 부딪히기만 한다.
+  # 잡 하나로 모아서 분야를 순서대로(for 루프) 하나씩 처리한다.
+  translate_and_publish:
+    needs: [collect, extract]
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/setup-python@v5
         with:
-          pattern: docs-*
-          path: downloaded_docs
-          merge-multiple: true
+          python-version: "3.11"
 
-      - name: Merge generated pages into docs/
-        run: cp -r downloaded_docs/* docs/
+      - run: pip install -r requirements-translate.txt
 
       - uses: actions/download-artifact@v4
         with:
           name: selected-papers
           path: selected/
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: extracted-*
+          path: extracted/
+
+      - name: Translate & publish each category sequentially
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          for category in $(echo '${{ needs.collect.outputs.categories }}' | python3 -c "import json,sys; print('\n'.join(json.load(sys.stdin)))"); do
+            echo "=== $category 번역 시작 ==="
+            python src/translate.py \
+              --input "extracted/extracted-${category}/extracted.md" \
+              --output "work/${category}/translated.md"
+            python src/publish.py \
+              --selected "selected/selected_${category}.json" \
+              --translated "work/${category}/translated.md" \
+              --docs-dir docs
+          done
 
       - name: Record this run's selection for the Monday notify workflow
         run: |
