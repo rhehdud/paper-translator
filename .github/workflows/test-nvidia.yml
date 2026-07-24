@@ -13,7 +13,7 @@ jobs:
 
       - run: pip install openai
 
-      - name: Call gemma-4-31b-it once with a tiny prompt
+      - name: Call qwen3-next-80b-a3b-instruct once with a tiny prompt
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
@@ -28,11 +28,11 @@ jobs:
               max_retries=0,
           )
 
-          for attempt in range(3):
+          for attempt in range(5):
               start = time.time()
               try:
                   resp = client.chat.completions.create(
-                      model="google/gemma-4-31b-it",
+                      model="qwen/qwen3-next-80b-a3b-instruct",
                       messages=[{"role": "user", "content": "Say 'ok' and nothing else."}],
                       temperature=0.0,
                       extra_body={"chat_template_kwargs": {"enable_thinking": False}},
