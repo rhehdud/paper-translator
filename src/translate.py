@@ -24,6 +24,9 @@ HANGUL_RE = re.compile(r"[가-힣]")
 UNTRANSLATED_CHECK_MIN_LEN = 100
 CITATION_LINK_RE = re.compile(r"\[[^\]]+\]\([^)]+\)")
 CITATION_YEAR_RE = re.compile(r"\((?:19|20)\d{2}[a-z]?\)")
+MATH_SPAN_RE = re.compile(r"\$\$.*?\$\$|\$[^$\n]+\$", re.DOTALL)
+ENGLISH_WORD_RE = re.compile(r"[a-zA-Z]{3,}")
+UNTRANSLATED_MIN_ENGLISH_WORDS = 5  # 수식 위주 문단은 LaTeX 명령어 몇 개 빼면 실제 영어 단어가 거의 없다
 UNTRANSLATED_MAX_ATTEMPTS = 3  # 이 실패 모드는 서버 문제가 아니라 내용 문제라, 오래·여러 번 재시도해도 잘 안 바뀐다
 UNTRANSLATED_RETRY_WAIT = 2.0
 
@@ -38,13 +41,18 @@ def _looks_like_references(paragraph: str) -> bool:
 def _looks_untranslated(original: str, translated: str) -> bool:
     """구분자 개수는 맞는데 모델이 번역 대신 원문을 그대로 돌려주는 경우가 있다.
     원문이 충분히 긴 산문인데 번역 결과에 한글이 사실상 없으면 번역이 안 된 것으로
-    본다. 참고문헌처럼 원래 한글이 거의 없는 게 정상인 짧은/인용 밀집 항목까지
-    오탐하지 않도록 원문 길이가 짧거나 참고문헌으로 보이면 검사하지 않는다."""
-    if len(original) < UNTRANSLATED_CHECK_MIN_LEN:
+    본다. 참고문헌처럼 원래 한글이 거의 없는 게 정상인 짧은/인용 밀집 항목이나,
+    수식($...$/$$...$$)이 대부분이라 실제 번역 대상 영어 산문이 거의 없는 문단까지
+    오탐하지 않도록 수식을 걷어낸 뒤 진짜 영어 단어가 충분히 남아있을 때만 판단한다."""
+    non_math_original = MATH_SPAN_RE.sub(" ", original)
+    if len(non_math_original) < UNTRANSLATED_CHECK_MIN_LEN:
         return False
     if _looks_like_references(original):
         return False
-    return len(HANGUL_RE.findall(translated)) < 5
+    non_math_translated = MATH_SPAN_RE.sub(" ", translated)
+    if len(ENGLISH_WORD_RE.findall(non_math_translated)) < UNTRANSLATED_MIN_ENGLISH_WORDS:
+        return False
+    return len(HANGUL_RE.findall(non_math_translated)) < 5
 
 
 def load_system_prompt(path: str) -> str:
