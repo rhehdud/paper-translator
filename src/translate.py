@@ -18,23 +18,11 @@ def load_system_prompt(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
-def chunk_markdown(text: str, max_chars: int) -> list[str]:
-    """빈 줄 단위 문단을 max_chars 예산 안에서 묶어 청크로 만든다 (문단 자체는 쪼개지 않음)."""
-    paragraphs = text.split("\n\n")
-    chunks: list[str] = []
-    current: list[str] = []
-    current_len = 0
-    for para in paragraphs:
-        para_len = len(para) + 2
-        if current and current_len + para_len > max_chars:
-            chunks.append("\n\n".join(current))
-            current = []
-            current_len = 0
-        current.append(para)
-        current_len += para_len
-    if current:
-        chunks.append("\n\n".join(current))
-    return chunks
+def chunk_markdown(text: str) -> list[str]:
+    """문단(빈 줄 구분) 하나당 API 호출 하나. 여러 문단을 한 번에 묶어 보내면 모델이
+    프롬프트 지시를 무시하고 문단·헤더 구분을 하나로 합쳐버리는 문제가 있어서,
+    묶지 않고 문단 경계를 호출 단위로 강제해 구조 보존을 코드로 보장한다."""
+    return [p for p in text.split("\n\n") if p.strip()]
 
 
 def _split_in_half(chunk: str) -> tuple[str, str] | None:
@@ -93,7 +81,6 @@ def main() -> None:
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--config", default="config.yaml")
-    parser.add_argument("--max-chars", type=int, default=12000, help="청크당 최대 문자 수")
     args = parser.parse_args()
 
     with open(args.config, encoding="utf-8") as f:
@@ -116,8 +103,8 @@ def main() -> None:
     system_prompt = load_system_prompt(config["system_prompt_file"])
 
     text = Path(args.input).read_text(encoding="utf-8")
-    chunks = chunk_markdown(text, args.max_chars)
-    print(f"{len(chunks)}개 청크로 분할, 순차 번역 시작", file=sys.stderr)
+    chunks = chunk_markdown(text)
+    print(f"{len(chunks)}개 문단으로 분할, 순차 번역 시작", file=sys.stderr)
 
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as out_f:
