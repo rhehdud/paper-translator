@@ -34,7 +34,7 @@ extraction:
 translation:
   provider: nvidia_nim
   base_url: https://integrate.api.nvidia.com/v1
-  model: qwen/qwen3-next-80b-a3b-instruct
+  model: openai/gpt-oss-20b
   temperature: 0.2
   system_prompt_file: prompts/translate_system.md
 

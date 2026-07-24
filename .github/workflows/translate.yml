@@ -63,12 +63,15 @@ jobs:
             gh run download "${{ steps.source.outputs.run_id }}" --name "$artifact_name" --dir "extracted/${category}"
           done
 
-      - name: 분야별 순차 번역·발행
+      - name: 분야별 순차 번역·발행 (분야 하나 끝날 때마다 바로 커밋)
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
           rm -rf data/last_run
           mkdir -p data/last_run
+
+          git config user.name "paper-translator-bot"
+          git config user.email "bot@users.noreply.github.com"
 
           for selected_file in selected/selected_*.json; do
             [ -e "$selected_file" ] || continue
@@ -90,17 +93,14 @@ jobs:
                 --source-dir "extracted/${category}" \
                 --docs-dir docs
               cp "$selected_file" data/last_run/
+              date -u +%Y-%m-%dT%H:%M:%SZ > data/last_run/generated_at.txt
+
+              # 분야 하나가 끝나는 즉시 커밋·푸시한다. 이후 다른 분야가 실패하거나
+              # 잡 자체가 취소돼도, 이미 성공한 번역은 여기서 이미 저장소에 남아 있다.
+              git add docs data/last_run
+              git commit -m "docs: $category 번역 추가 $(date -u +%Y-%m-%d)" || echo "커밋할 변경 없음"
+              git push
             else
               echo "=== [$category] 추출 결과 없음(페이지 상한 초과 등으로 건너뜀) ==="
             fi
           done
-
-          date -u +%Y-%m-%dT%H:%M:%SZ > data/last_run/generated_at.txt
-
-      - name: Commit translated docs
-        run: |
-          git config user.name "paper-translator-bot"
-          git config user.email "bot@users.noreply.github.com"
-          git add docs data/last_run
-          git commit -m "docs: weekly papers $(date -u +%Y-%m-%d)" || echo "커밋할 변경 없음"
-          git push

@@ -1,10 +1,11 @@
-"""NVIDIA NIM(qwen/qwen3-next-80b-a3b-instruct)으로 마크다운을 청크 단위 순차 번역한다.
+"""NVIDIA NIM(openai/gpt-oss-20b)으로 마크다운을 문단 배치 단위로 순차 번역한다.
 
 사용법:
     NVIDIA_API_KEY=nvapi-... python src/translate.py --input paper.md --output paper.ko.md
 """
 import argparse
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -13,59 +14,122 @@ import httpx
 import yaml
 from openai import OpenAI
 
+PARAGRAPH_DELIMITER = "<<<P>>>"
+
 
 def load_system_prompt(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
-def chunk_markdown(text: str) -> list[str]:
-    """문단(빈 줄 구분) 하나당 API 호출 하나. 여러 문단을 한 번에 묶어 보내면 모델이
-    프롬프트 지시를 무시하고 문단·헤더 구분을 하나로 합쳐버리는 문제가 있어서,
-    묶지 않고 문단 경계를 호출 단위로 강제해 구조 보존을 코드로 보장한다."""
-    return [p for p in text.split("\n\n") if p.strip()]
+def chunk_markdown(text: str, max_chars: int = 4000) -> list[list[str]]:
+    """문단(빈 줄 구분)을 max_chars 예산 안에서 묶어 배치로 만든다 (문단 자체는 쪼개지 않음).
+    각 배치는 문단 문자열의 리스트로 반환되며, 실제 API 호출 시 고유 구분자로 이어붙인다."""
+    paragraphs = [p for p in text.split("\n\n") if p.strip()]
+    batches: list[list[str]] = []
+    current: list[str] = []
+    current_len = 0
+    for para in paragraphs:
+        para_len = len(para) + len(PARAGRAPH_DELIMITER)
+        if current and current_len + para_len > max_chars:
+            batches.append(current)
+            current = []
+            current_len = 0
+        current.append(para)
+        current_len += para_len
+    if current:
+        batches.append(current)
+    return batches
 
 
-def _split_in_half(chunk: str) -> tuple[str, str] | None:
-    """문단(빈 줄) 경계를 기준으로 청크를 절반씩 나눈다. 문단이 하나뿐이면 나눌 수 없다."""
-    paragraphs = chunk.split("\n\n")
-    if len(paragraphs) < 2:
-        return None
+_last_request_time = 0.0
+_MIN_REQUEST_INTERVAL = 2.0  # NVIDIA 무료 티어 40rpm 한도에 여유를 두고 최대 30rpm으로 제한
+
+
+def _call_model(client: OpenAI, model: str, system_prompt: str, temperature: float, content: str) -> tuple[str, str]:
+    """API를 한 번 호출해 (본문, finish_reason)을 반환한다. 요청 간 최소 간격을 지킨다."""
+    global _last_request_time
+    elapsed = time.monotonic() - _last_request_time
+    if elapsed < _MIN_REQUEST_INTERVAL:
+        time.sleep(_MIN_REQUEST_INTERVAL - elapsed)
+    _last_request_time = time.monotonic()
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content},
+        ],
+        temperature=temperature,
+        # thinking을 켜두면 답변마다 긴 추론 과정을 먼저 생성해 훨씬 느려진다.
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+    )
+    return resp.choices[0].message.content or "", resp.choices[0].finish_reason
+
+
+def translate_paragraphs(
+    client: OpenAI,
+    model: str,
+    system_prompt: str,
+    temperature: float,
+    paragraphs: list[str],
+    max_retries: int = 12,
+) -> str:
+    """문단 여러 개를 고유 구분자로 묶어 한 번에 번역한다. 응답에서 구분자 개수가 보낸
+    문단 수와 정확히 일치하는지 코드로 검증하고, 안 맞으면(모델이 문단을 합쳐버렸으면)
+    절반으로 나눠 재귀적으로 재시도한다 -- 프롬프트 지시만으로는 구조 보존을 신뢰할 수 없어서
+    항상 코드로 검증한다."""
+    if len(paragraphs) == 1:
+        return _translate_single(client, model, system_prompt, temperature, paragraphs[0], max_retries)
+
+    joined = f"\n\n{PARAGRAPH_DELIMITER}\n\n".join(paragraphs)
+    for attempt in range(max_retries):
+        try:
+            content, finish_reason = _call_model(client, model, system_prompt, temperature, joined)
+            if finish_reason == "length":
+                print(
+                    f"번역 응답이 컨텍스트 한도로 잘림 ({len(paragraphs)}개 문단 배치) -- 절반으로 나눠 재번역",
+                    file=sys.stderr,
+                )
+                return _bisect_and_translate(client, model, system_prompt, temperature, paragraphs, max_retries)
+
+            parts = [p.strip() for p in re.split(re.escape(PARAGRAPH_DELIMITER), content) if p.strip()]
+            if len(parts) != len(paragraphs):
+                print(
+                    f"번역 응답의 문단 수가 안 맞음 (보냄 {len(paragraphs)} / 받음 {len(parts)}) "
+                    "-- 절반으로 나눠 재번역",
+                    file=sys.stderr,
+                )
+                return _bisect_and_translate(client, model, system_prompt, temperature, paragraphs, max_retries)
+            return "\n\n".join(parts)
+        except Exception as e:
+            wait = min(60, 2**attempt)
+            cause = e.__cause__ or e.__context__
+            detail = f"{type(e).__name__}: {e}" + (f" | 원인: {type(cause).__name__}: {cause}" if cause else "")
+            print(f"번역 실패 (시도 {attempt + 1}/{max_retries}): {detail} -- {wait}초 후 재시도", file=sys.stderr)
+            time.sleep(wait)
+    raise RuntimeError("번역 재시도 한도를 초과했습니다")
+
+
+def _bisect_and_translate(
+    client: OpenAI, model: str, system_prompt: str, temperature: float, paragraphs: list[str], max_retries: int
+) -> str:
     mid = len(paragraphs) // 2
-    return "\n\n".join(paragraphs[:mid]), "\n\n".join(paragraphs[mid:])
+    return (
+        translate_paragraphs(client, model, system_prompt, temperature, paragraphs[:mid], max_retries)
+        + "\n\n"
+        + translate_paragraphs(client, model, system_prompt, temperature, paragraphs[mid:], max_retries)
+    )
 
 
-def translate_chunk(
-    client: OpenAI, model: str, system_prompt: str, temperature: float, chunk: str, max_retries: int = 12
+def _translate_single(
+    client: OpenAI, model: str, system_prompt: str, temperature: float, paragraph: str, max_retries: int
 ) -> str:
     for attempt in range(max_retries):
         try:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": chunk},
-                ],
-                temperature=temperature,
-                # thinking을 켜두면 답변마다 긴 추론 과정을 먼저 생성해 훨씬 느려진다.
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-            )
-            content = resp.choices[0].message.content or ""
-            if resp.choices[0].finish_reason == "length":
-                # 모델 컨텍스트 한도에 걸려 응답이 중간에 잘림 -- 그대로 쓰면 "축소·요약 금지"
-                # 원칙이 조용히 깨지므로, 절대 그대로 반환하지 않고 청크를 반으로 쪼개 재번역한다.
-                halves = _split_in_half(chunk)
-                if halves is None:
-                    raise RuntimeError("응답이 컨텍스트 한도로 잘렸는데 더 이상 쪼갤 수 없는 단일 문단입니다")
-                print(
-                    f"번역 응답이 컨텍스트 한도로 잘림 ({len(chunk)}자 청크) -- 절반으로 나눠 재번역",
-                    file=sys.stderr,
-                )
-                first, second = halves
-                return (
-                    translate_chunk(client, model, system_prompt, temperature, first, max_retries)
-                    + "\n\n"
-                    + translate_chunk(client, model, system_prompt, temperature, second, max_retries)
-                )
+            content, finish_reason = _call_model(client, model, system_prompt, temperature, paragraph)
+            if finish_reason == "length":
+                # 문단 하나가 그 자체로 모델 컨텍스트 한도를 넘김 -- 더 이상 쪼갤 단위가 없어
+                # "축소·요약 금지" 원칙을 지킬 방법이 없으므로 조용히 넘어가지 않고 실패시킨다.
+                raise RuntimeError("응답이 컨텍스트 한도로 잘렸는데 더 이상 쪼갤 수 없는 단일 문단입니다")
             return content
         except Exception as e:
             wait = min(60, 2**attempt)
@@ -81,6 +145,7 @@ def main() -> None:
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--max-chars", type=int, default=4000, help="배치당 최대 문자 수")
     args = parser.parse_args()
 
     with open(args.config, encoding="utf-8") as f:
@@ -92,9 +157,9 @@ def main() -> None:
         raise SystemExit("환경변수 NVIDIA_API_KEY가 설정되어 있지 않습니다")
 
     # 90초는 너무 짧아서 정상적으로 느린(수 분 걸리는) 응답까지 타임아웃으로 죽였다.
-    # 5분으로 늘리되, SDK 자체 재시도(기본 max_retries=2)는 꺼서 아래 translate_chunk의
-    # 재시도 루프와 중첩되어 한 청크가 몇 시간씩 멎는 것만 막는다.
-    # keep-alive 연결 재사용을 꺼서, 청크 사이 유휴 시간에 서버(프록시)가 먼저 끊어버린
+    # 5분으로 늘리되, SDK 자체 재시도(기본 max_retries=2)는 꺼서 아래 재시도 루프와
+    # 중첩되어 한 배치가 몇 시간씩 멎는 것만 막는다.
+    # keep-alive 연결 재사용을 꺼서, 배치 사이 유휴 시간에 서버(프록시)가 먼저 끊어버린
     # 연결을 재사용하다 "Server disconnected without sending a response"가 나는 걸 막는다.
     http_client = httpx.Client(limits=httpx.Limits(max_keepalive_connections=0))
     client = OpenAI(
@@ -103,14 +168,15 @@ def main() -> None:
     system_prompt = load_system_prompt(config["system_prompt_file"])
 
     text = Path(args.input).read_text(encoding="utf-8")
-    chunks = chunk_markdown(text)
-    print(f"{len(chunks)}개 문단으로 분할, 순차 번역 시작", file=sys.stderr)
+    batches = chunk_markdown(text, args.max_chars)
+    print(f"{len(batches)}개 배치로 분할, 순차 번역 시작", file=sys.stderr)
 
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as out_f:
-        for i, chunk in enumerate(chunks):
-            print(f"[{i + 1}/{len(chunks)}] 번역 중 ({len(chunk)}자)", file=sys.stderr)
-            translated = translate_chunk(client, config["model"], system_prompt, config["temperature"], chunk)
+        for i, batch in enumerate(batches):
+            batch_len = sum(len(p) for p in batch)
+            print(f"[{i + 1}/{len(batches)}] 번역 중 (문단 {len(batch)}개, {batch_len}자)", file=sys.stderr)
+            translated = translate_paragraphs(client, config["model"], system_prompt, config["temperature"], batch)
             out_f.write(translated.strip() + "\n\n")
             out_f.flush()
 
