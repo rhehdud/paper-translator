@@ -35,7 +35,8 @@ translation:
   provider: nvidia_nim
   base_url: https://integrate.api.nvidia.com/v1
   model: openai/gpt-oss-20b
-  temperature: 0.2
+  # 문단 구분자(<<<P>>>) 개수를 안 맞춰서 재시도가 잦아지는 걸 줄이려고 0.2 -> 0에 가깝게 낮춤
+  temperature: 0.1
   system_prompt_file: prompts/translate_system.md
 
 publish:
