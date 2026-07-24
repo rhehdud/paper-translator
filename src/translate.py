@@ -1,4 +1,4 @@
-"""NVIDIA NIM(google/gemma-4-31b-it)으로 마크다운을 청크 단위 순차 번역한다.
+"""NVIDIA NIM(qwen/qwen3-next-80b-a3b-instruct)으로 마크다운을 청크 단위 순차 번역한다.
 
 사용법:
     NVIDIA_API_KEY=nvapi-... python src/translate.py --input paper.md --output paper.ko.md

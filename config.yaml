@@ -34,7 +34,7 @@ extraction:
 translation:
   provider: nvidia_nim
   base_url: https://integrate.api.nvidia.com/v1
-  model: google/gemma-4-31b-it
+  model: qwen/qwen3-next-80b-a3b-instruct
   temperature: 0.2
   system_prompt_file: prompts/translate_system.md
 
