@@ -77,6 +77,43 @@ def normalize_anchor_spacing(markdown_text: str) -> str:
     return "\n".join(fixed)
 
 
+EQUATION_LINE_RE = re.compile(r"^\s*\$\$.*\$\$\s*$")
+# 수식 바로 뒤에 "(2)"처럼 같은 줄에 붙은 수식 번호 (괄호 안 10자 이내로 제한해 오탐 방지)
+EQUATION_TRAILING_LABEL_RE = re.compile(r"^(\s*\$\$.*\$\$)\s*(\([^()\n]{1,10}\))\s*$")
+
+
+def normalize_equation_spacing(markdown_text: str) -> str:
+    """Marker가 디스플레이 수식($$...$$) 바로 옆(같은 줄 끝 또는 바로 다음 줄)에 빈 줄
+    없이 "(2)" 같은 수식 번호를 붙여두면, 마크다운이 수식과 번호를 하나의 문단으로
+    묶어버려 표시 수식이 인라인으로 잘못 처리되는 렌더링 버그가 생긴다 (앵커 태그와
+    같은 클래스의 문제). 같은 줄에 붙은 번호는 먼저 별도 줄로 떼어내고, 수식 줄
+    앞뒤에 빈 줄이 없으면 강제로 넣어 항상 별도 블록으로 분리한다."""
+    lines = markdown_text.split("\n")
+
+    split_lines: list[str] = []
+    for line in lines:
+        m = EQUATION_TRAILING_LABEL_RE.match(line)
+        if m:
+            split_lines.append(m.group(1))
+            split_lines.append(m.group(2))
+        else:
+            split_lines.append(line)
+    lines = split_lines
+
+    fixed: list[str] = []
+    for i, line in enumerate(lines):
+        is_eq = bool(EQUATION_LINE_RE.match(line))
+        prev_is_eq = bool(fixed) and bool(EQUATION_LINE_RE.match(fixed[-1]))
+        if is_eq and fixed and fixed[-1].strip() != "" and not prev_is_eq:
+            fixed.append("")
+        fixed.append(line)
+        if is_eq:
+            next_line = lines[i + 1] if i + 1 < len(lines) else None
+            if next_line is not None and next_line.strip() != "":
+                fixed.append("")
+    return "\n".join(fixed)
+
+
 def run_marker(pdf_path: Path, output_dir: Path) -> Path:
     subprocess.run(
         [
@@ -141,7 +178,7 @@ def main() -> None:
     # 인라인으로 잘못 처리되는 걸 막기 위해 빈 줄 정규화를 적용한다.
     raw_md = (out_dir / md_path.name).read_text(encoding="utf-8")
     (out_dir / md_path.name).unlink()
-    normalized_md = normalize_anchor_spacing(normalize_table_spacing(raw_md))
+    normalized_md = normalize_equation_spacing(normalize_anchor_spacing(normalize_table_spacing(raw_md)))
     (out_dir / "extracted.md").write_text(normalized_md, encoding="utf-8")
 
     print(f"추출 완료: {out_dir} (이미지 포함)", file=sys.stderr)

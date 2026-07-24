@@ -20,6 +20,19 @@ TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
 TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$")
 NO_LETTERS_RE = re.compile(r"^[^a-zA-Z가-힣]*$")  # 숫자/기호로만 된 셀(예: "0.993 / 0.99")은 번역할 게 없다
 
+HANGUL_RE = re.compile(r"[가-힣]")
+UNTRANSLATED_CHECK_MIN_LEN = 100
+
+
+def _looks_untranslated(original: str, translated: str) -> bool:
+    """구분자 개수는 맞는데 모델이 번역 대신 원문을 그대로 돌려주는 경우가 있다
+    (특히 인용이 많은 조밀한 문단에서). 원문이 충분히 긴 산문인데 번역 결과에
+    한글이 사실상 없으면 번역이 안 된 것으로 본다. 참고문헌처럼 원래 한글이 거의
+    없는 게 정상인 짧은 항목까지 오탐하지 않도록 원문 길이가 짧으면 검사하지 않는다."""
+    if len(original) < UNTRANSLATED_CHECK_MIN_LEN:
+        return False
+    return len(HANGUL_RE.findall(translated)) < 5
+
 
 def load_system_prompt(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
@@ -134,6 +147,13 @@ def _translate_parts(
                     file=sys.stderr,
                 )
                 return _bisect_and_translate(client, model, system_prompt, temperature, paragraphs, max_retries)
+            if any(_looks_untranslated(src, out) for src, out in zip(paragraphs, parts)):
+                print(
+                    f"번역 응답 중 일부에 한글이 거의 없음(번역 안 되고 원문이 그대로 돌아온 것으로 보임, "
+                    f"{len(paragraphs)}개 항목 배치) -- 절반으로 나눠 재번역",
+                    file=sys.stderr,
+                )
+                return _bisect_and_translate(client, model, system_prompt, temperature, paragraphs, max_retries)
             return parts
         except Exception as e:
             wait = min(60, 2**attempt)
@@ -202,6 +222,7 @@ def translate_table(
 def _translate_single(
     client: OpenAI, model: str, system_prompt: str, temperature: float, paragraph: str, max_retries: int
 ) -> str:
+    last_untranslated: str | None = None
     for attempt in range(max_retries):
         try:
             content, finish_reason = _call_model(client, model, system_prompt, temperature, paragraph)
@@ -209,6 +230,16 @@ def _translate_single(
                 # 문단 하나가 그 자체로 모델 컨텍스트 한도를 넘김 -- 더 이상 쪼갤 단위가 없어
                 # "축소·요약 금지" 원칙을 지킬 방법이 없으므로 조용히 넘어가지 않고 실패시킨다.
                 raise RuntimeError("응답이 컨텍스트 한도로 잘렸는데 더 이상 쪼갤 수 없는 단일 문단입니다")
+            if _looks_untranslated(paragraph, content):
+                last_untranslated = content
+                wait = min(60, 2**attempt)
+                print(
+                    f"번역 결과에 한글이 거의 없음(번역 안 되고 원문이 그대로 돌아온 것으로 보임) "
+                    f"-- {wait}초 후 재시도 ({attempt + 1}/{max_retries})",
+                    file=sys.stderr,
+                )
+                time.sleep(wait)
+                continue
             return content
         except Exception as e:
             wait = min(60, 2**attempt)
@@ -216,6 +247,16 @@ def _translate_single(
             detail = f"{type(e).__name__}: {e}" + (f" | 원인: {type(cause).__name__}: {cause}" if cause else "")
             print(f"번역 실패 (시도 {attempt + 1}/{max_retries}): {detail} -- {wait}초 후 재시도", file=sys.stderr)
             time.sleep(wait)
+    if last_untranslated is not None:
+        # 여러 번 재시도해도 계속 원문 그대로 돌아온다 -- 참고문헌처럼 의도적으로 번역
+        # 대상이 아닐 수도 있으므로, 전체 파이프라인을 실패시키는 대신 경고만 남기고
+        # 마지막 응답을 그대로 채택한다.
+        print(
+            "경고: 여러 번 재시도했지만 번역되지 않은 것으로 보이는 문단을 원문 그대로 둡니다 "
+            "(참고문헌 등 의도적 미번역 대상일 수 있음)",
+            file=sys.stderr,
+        )
+        return last_untranslated
     raise RuntimeError("번역 재시도 한도를 초과했습니다")
 
 
