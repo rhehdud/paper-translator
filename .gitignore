@@ -5,6 +5,7 @@ __pycache__/
 *.pyc
 .DS_Store
 .claude/
+.vscode/
 
 # 이전 실험 파일들 (paper-translator 파이프라인과 무관)
 test.py

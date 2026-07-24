@@ -21,10 +21,36 @@ CATEGORY_DIR_NAMES = {
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".gif", ".webp", ".svg"}
 IMAGE_REF_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
 
+NAV_TITLE_MAX_LEN = 40
+_HEADING_LINE_RE = re.compile(r'^\s*#\s+(?:<span[^>]*></span>\s*)?(.*)$')
+
 
 def slugify(text: str, max_len: int = 60) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
     return slug[:max_len].rstrip("-")
+
+
+def truncate_title(title: str, max_len: int = NAV_TITLE_MAX_LEN) -> str:
+    """사이드바 내비게이션에는 제목이 너무 길면 잘라서 보여준다."""
+    if len(title) <= max_len:
+        return title
+    return title[:max_len].rstrip() + "…"
+
+
+def extract_translated_title(translated_body: str, fallback: str) -> str:
+    """번역된 본문 첫 줄(원 논문 제목의 번역)에서 제목만 뽑아낸다. Marker가 제목·저자·
+    다음 섹션 헤더를 빈 줄 없이 한 줄에 붙여 놓는 경우가 있어, 다음 마크다운 헤더
+    마커(## ~ ######) 앞까지만 제목으로 본다. 뽑아내지 못하면 원문(영어) 제목을 쓴다."""
+    first_line = translated_body.split("\n", 1)[0]
+    match = _HEADING_LINE_RE.match(first_line)
+    if not match:
+        return fallback
+    text = match.group(1).strip()
+    cut = re.search(r"\s#{2,6}\s", text)
+    if cut:
+        text = text[: cut.start()]
+    text = text.replace("**", "").strip()
+    return text or fallback
 
 
 def copy_images_and_rewrite_refs(translated_body: str, source_dir: Path, page_images_dir: Path) -> str:
@@ -50,9 +76,11 @@ def copy_images_and_rewrite_refs(translated_body: str, source_dir: Path, page_im
 
 def build_page(paper: dict, translated_body: str) -> str:
     today = date.today().isoformat()
+    translated_title = extract_translated_title(translated_body, paper["title"])
+    nav_title = truncate_title(translated_title)
     frontmatter = (
         "---\n"
-        f"title: \"{paper['title']}\"\n"
+        f"title: \"{nav_title}\"\n"
         f"arxiv_id: {paper['id']}\n"
         f"category: {paper['category']}\n"
         f"published: {paper['published']}\n"
@@ -61,7 +89,8 @@ def build_page(paper: dict, translated_body: str) -> str:
         "---\n\n"
     )
     header = (
-        f"# {paper['title']}\n\n"
+        f"# {translated_title}\n\n"
+        f"- 원제: {paper['title']}\n"
         f"- 원문: [{paper['abs_url']}]({paper['abs_url']})\n"
         f"- PDF: [{paper['pdf_url']}]({paper['pdf_url']})\n"
         f"- arXiv ID: `{paper['id']}`\n\n"

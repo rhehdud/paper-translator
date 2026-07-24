@@ -5,6 +5,7 @@
 """
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,46 @@ def download_pdf(pdf_url: str, dest: Path) -> None:
 
 def count_pages(pdf_path: Path) -> int:
     return len(PdfReader(str(pdf_path)).pages)
+
+
+TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
+
+
+def normalize_table_spacing(markdown_text: str) -> str:
+    """Marker가 표 캡션·본문 바로 다음 줄에 빈 줄 없이 표를 이어붙이면, 마크다운 표
+    파서가 표의 시작을 인식하지 못해 파이프(|) 문자가 렌더링되지 않고 그대로 텍스트로
+    노출되는 버그가 생긴다. 표로 보이는 줄(파이프로 시작·끝)의 앞뒤에 빈 줄이 없으면
+    강제로 넣어 항상 별도 블록으로 분리한다."""
+    lines = markdown_text.split("\n")
+    fixed: list[str] = []
+    for i, line in enumerate(lines):
+        is_table_row = bool(TABLE_ROW_RE.match(line))
+        prev_is_table_row = bool(fixed) and bool(TABLE_ROW_RE.match(fixed[-1]))
+        if is_table_row and fixed and fixed[-1].strip() != "" and not prev_is_table_row:
+            fixed.append("")
+        fixed.append(line)
+        if is_table_row:
+            next_line = lines[i + 1] if i + 1 < len(lines) else None
+            next_is_table_row = next_line is not None and bool(TABLE_ROW_RE.match(next_line))
+            if next_line is not None and next_line.strip() != "" and not next_is_table_row:
+                fixed.append("")
+    return "\n".join(fixed)
+
+
+def normalize_anchor_spacing(markdown_text: str) -> str:
+    """Marker가 <span id="..."></span> 앵커 태그 바로 다음 줄에 빈 줄 없이 내용을 붙여두면,
+    마크다운이 그 뒤에 오는 $$ 수식을 같은 문단으로 묶어버려 표시(display) 수식이 인라인으로
+    잘못 처리되면서 '$' 기호가 그대로 남는 렌더링 버그가 생긴다. 앵커 단독 줄 뒤에 빈 줄을
+    강제로 넣어 항상 별도 문단으로 분리한다."""
+    lines = markdown_text.split("\n")
+    fixed: list[str] = []
+    for i, line in enumerate(lines):
+        fixed.append(line)
+        if re.fullmatch(r'\s*<span id="[^"]*"></span>\s*', line):
+            next_line = lines[i + 1] if i + 1 < len(lines) else None
+            if next_line is not None and next_line.strip() != "":
+                fixed.append("")
+    return "\n".join(fixed)
 
 
 def run_marker(pdf_path: Path, output_dir: Path) -> Path:
@@ -96,8 +137,12 @@ def main() -> None:
             continue  # _meta.json은 필요 없음
         shutil.copy(item, out_dir / item.name)
 
-    # 마크다운 파일 이름을 다운스트림에서 예측 가능하게 고정
-    (out_dir / md_path.name).rename(out_dir / "extracted.md")
+    # 마크다운 파일 이름을 다운스트림에서 예측 가능하게 고정하면서, 앵커 태그 뒤 수식이
+    # 인라인으로 잘못 처리되는 걸 막기 위해 빈 줄 정규화를 적용한다.
+    raw_md = (out_dir / md_path.name).read_text(encoding="utf-8")
+    (out_dir / md_path.name).unlink()
+    normalized_md = normalize_anchor_spacing(normalize_table_spacing(raw_md))
+    (out_dir / "extracted.md").write_text(normalized_md, encoding="utf-8")
 
     print(f"추출 완료: {out_dir} (이미지 포함)", file=sys.stderr)
 
