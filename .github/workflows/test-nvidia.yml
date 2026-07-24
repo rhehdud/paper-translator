@@ -13,7 +13,7 @@ jobs:
 
       - run: pip install openai
 
-      - name: Call qwen3-next-80b-a3b-instruct once with a tiny prompt
+      - name: Call gpt-oss-20b once with a tiny prompt
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
@@ -32,10 +32,14 @@ jobs:
               start = time.time()
               try:
                   resp = client.chat.completions.create(
-                      model="qwen/qwen3-next-80b-a3b-instruct",
-                      messages=[{"role": "user", "content": "Say 'ok' and nothing else."}],
+                      model="openai/gpt-oss-20b",
+                      messages=[{
+                          "role": "user",
+                          "content": "Translate to Korean, output only the translation: "
+                                     "\"The car wash is only 50 meters from my house. "
+                                     "Should I walk there or drive?\"",
+                      }],
                       temperature=0.0,
-                      extra_body={"chat_template_kwargs": {"enable_thinking": False}},
                   )
                   print(f"[시도 {attempt+1}] 성공, {time.time()-start:.1f}초 걸림")
                   print("응답:", resp.choices[0].message.content)
