@@ -37,6 +37,22 @@ def count_pages(pdf_path: Path) -> int:
     return len(PdfReader(str(pdf_path)).pages)
 
 
+def normalize_citation_brackets(markdown_text: str) -> str:
+    """Marker가 인용 표기 "(Liu et al., 2025)"나 "[Kwa et al., 2026]"를 마크다운
+    링크 텍스트 안에서 이스케이프할 때 \\(, \\), \\[, \\] (백슬래시 1~2개) 형태로
+    내보내는 경우가 있는데, 이건 우연히 MathJax의 인라인/디스플레이 수식 구분자
+    (\\( \\), \\[ \\])와 똑같이 생겼다. 그래서 pymdownx.arithmatex가 평범한 인용
+    텍스트를 수식으로 오인해 감싸버리고, MathJax가 그 내용을 수식으로 파싱하려다
+    실패해 "You can't use '#' in math mode" 같은 에러가 그대로 페이지에 노출된다
+    (실제 발견됨). 이 이스케이프는 애초에 불필요하므로 -- 괄호는 마크다운에서 이스케이프가
+    필요 없고, 대괄호는 HTML 엔티티로 대체 가능 -- 걷어낸다."""
+    markdown_text = re.sub(r"\\{1,2}\(", "(", markdown_text)
+    markdown_text = re.sub(r"\\{1,2}\)", ")", markdown_text)
+    markdown_text = re.sub(r"\\{1,2}\[", "&#91;", markdown_text)
+    markdown_text = re.sub(r"\\{1,2}\]", "&#93;", markdown_text)
+    return markdown_text
+
+
 # 정상적으로 짝이 맞는 $$...$$/$...$ 구간을 찾는 패턴 (translate.py의 MATH_SPAN_RE와 동일 기준).
 MATH_SPAN_RE = re.compile(r"\$\$.*?\$\$|\$[^$\n]+\$", re.DOTALL)
 
@@ -285,7 +301,9 @@ def main() -> None:
     normalized_md = normalize_equation_spacing(
         normalize_anchor_spacing(
             normalize_table_spacing(
-                normalize_heading_levels(normalize_pseudocode_blocks(escape_orphan_dollars(raw_md)))
+                normalize_heading_levels(
+                    normalize_pseudocode_blocks(escape_orphan_dollars(normalize_citation_brackets(raw_md)))
+                )
             )
         )
     )
