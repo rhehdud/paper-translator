@@ -22,12 +22,16 @@ NO_LETTERS_RE = re.compile(r"^[^a-zA-Z가-힣]*$")  # 숫자/기호로만 된 �
 
 HANGUL_RE = re.compile(r"[가-힣]")
 UNTRANSLATED_CHECK_MIN_LEN = 100
-CITATION_LINK_RE = re.compile(r"\[[^\]]+\]\([^)]+\)")
+# 링크 텍스트 안에 연도가 있어야만 "인용"으로 본다. Marker는 "Eq. 1", "§3" 같은 순수
+# 내부 상호참조(수식·절·그림 번호)도 똑같은 마크다운 링크로 뽑아내는데, 이런 링크까지
+# 세면 각주·수식 참조가 몇 개만 있어도 본문 문단이 "참고문헌"으로 오탐돼 미번역 문단이
+# 검증 없이 그대로 통과해버린다 (실제 발견됨).
+CITATION_LINK_RE = re.compile(r"\[[^\]]*(?:19|20)\d{2}[^\]]*\]\([^)]+\)")
 CITATION_YEAR_RE = re.compile(r"\((?:19|20)\d{2}[a-z]?\)")
 MATH_SPAN_RE = re.compile(r"\$\$.*?\$\$|\$[^$\n]+\$", re.DOTALL)
 ENGLISH_WORD_RE = re.compile(r"[a-zA-Z]{3,}")
 UNTRANSLATED_MIN_ENGLISH_WORDS = 5  # 수식 위주 문단은 LaTeX 명령어 몇 개 빼면 실제 영어 단어가 거의 없다
-UNTRANSLATED_MAX_ATTEMPTS = 3  # 이 실패 모드는 서버 문제가 아니라 내용 문제라, 오래·여러 번 재시도해도 잘 안 바뀐다
+UNTRANSLATED_MAX_ATTEMPTS = 5  # 이제 배치 전체가 아니라 문제 문단만 개별 재시도라 비용이 작아, 여유를 좀 더 둠
 UNTRANSLATED_RETRY_WAIT = 2.0
 
 # 논문 안에 인용된 프롬프트/지시문(예: LLM-as-a-Judge 평가 템플릿)을 모델이 자기한테
