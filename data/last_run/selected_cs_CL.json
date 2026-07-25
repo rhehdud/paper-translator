@@ -1,0 +1,11 @@
+{
+  "id": "2607.21547",
+  "title": "The Boundaries of Automation: A Theory of Persistent Human Participation",
+  "summary": "The rapid progress of AI has intensified the long-standing pursuit of automation: replacing human participation with algorithms wherever possible. Implicit in this pursuit is the assumption that humans remain in the loop only because current AI systems are not yet sufficiently capable. This paper challenges that assumption. Rather than asking how far automation can extend, we ask where its conceptual limits lie and argue that human participation may persist even with highly capable AI systems for three distinct reasons. Technical or complementarity grounds arise when humans contribute capabilities or perspectives unavailable to AI. Normative or developmental grounds arise when participation itself is valuable for human agency or learning. Most importantly, emergence grounds arise from target emergence: in some activities, the target is not fully specified in advance but instead emerges through the interaction itself. In these cases, human participation is not merely a means of improving execution but is constitutive of the target being produced. Human--AI co-construction, understood as the joint production of outcomes by humans and AI systems, is therefore not simply a temporary response to imperfect AI, but a persistent feature of activities whose objectives emerge through participation. This perspective has important implications for the limits of automation and for the design, evaluation, and ethics of future AI systems.",
+  "abs_url": "https://arxiv.org/abs/2607.21547",
+  "pdf_url": "https://arxiv.org/pdf/2607.21547v1",
+  "published": "2026-07-23T17:33:43+00:00",
+  "selection_reason": "fallback_most_recent",
+  "num_pages": 42,
+  "category": "cs.CL"
+}
