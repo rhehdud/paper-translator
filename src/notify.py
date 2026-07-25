@@ -41,13 +41,18 @@ def check_staleness(generated_at_file: str | None, max_age_hours: int = 48) -> s
 def build_message(
     papers: list[dict], site_url: str, warning: str | None = None, published_date: str | None = None
 ) -> dict:
-    lines = []
+    lines = ["@everyone"]
     if warning:
         lines.append(warning)
     lines.append(f"**이번 주 번역된 논문 {len(papers)}편**")
     for p in papers:
         lines.append(f"- [{p['category']}] {p['title']} — {paper_url(p, site_url, published_date)} (arXiv: {p['id']})")
-    return {"content": "\n".join(lines)}
+    return {
+        "content": "\n".join(lines),
+        # content에 "@everyone" 텍스트만 넣으면 실제로 멘션(핑)되지 않고 글자 그대로만
+        # 보인다. Discord가 진짜로 멘션 처리하게 하려면 이 필드에 명시적으로 허용해야 한다.
+        "allowed_mentions": {"parse": ["everyone"]},
+    }
 
 
 def send_discord(webhook_url: str, payload: dict) -> None:
