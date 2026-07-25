@@ -202,20 +202,26 @@ def _translate_parts(
                     file=sys.stderr,
                 )
                 return _bisect_and_translate(client, model, system_prompt, temperature, paragraphs, max_retries)
-            if any(_looks_untranslated(src, out) for src, out in zip(paragraphs, parts)):
+
+            # 항목 수가 맞으면 원문-번역 짝이 인덱스로 정확히 매칭되므로, 문제 있는
+            # 항목만 개별 재번역한다. 배치 전체를 버리고 절반씩 다시 보내면, 이미 잘
+            # 번역된 나머지 항목들까지 매번 헛되이 재요청하게 되어 시간이 크게 낭비된다
+            # (실제로 33개 항목 중 1개 때문에 33->16->8->4->2로 반복 재번역되는 사례 확인).
+            bad_indices = [
+                i
+                for i, (src, out) in enumerate(zip(paragraphs, parts))
+                if _looks_untranslated(src, out) or _dollar_count_mismatch(src, out)
+            ]
+            if bad_indices:
                 print(
-                    f"번역 응답 중 일부에 한글이 거의 없음(번역 안 되고 원문이 그대로 돌아온 것으로 보임, "
-                    f"{len(paragraphs)}개 항목 배치) -- 절반으로 나눠 재번역",
+                    f"번역 응답 중 {len(bad_indices)}개 항목만 문제 있음 ({len(paragraphs)}개 항목 배치) "
+                    "-- 해당 항목만 개별 재번역",
                     file=sys.stderr,
                 )
-                return _bisect_and_translate(client, model, system_prompt, temperature, paragraphs, max_retries)
-            if any(_dollar_count_mismatch(src, out) for src, out in zip(paragraphs, parts)):
-                print(
-                    f"번역 응답 중 일부에서 수식 \\$ 개수가 원문과 다름 ({len(paragraphs)}개 항목 배치) "
-                    "-- 절반으로 나눠 재번역",
-                    file=sys.stderr,
-                )
-                return _bisect_and_translate(client, model, system_prompt, temperature, paragraphs, max_retries)
+                for i in bad_indices:
+                    parts[i] = _translate_single(
+                        client, model, system_prompt, temperature, paragraphs[i], max_retries
+                    )
             return parts
         except Exception as e:
             wait = min(60, 2**attempt)
@@ -374,9 +380,11 @@ def main() -> None:
     print(f"{len(batches)}개 배치로 분할, 순차 번역 시작", file=sys.stderr)
 
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    run_start = time.monotonic()
     with open(args.output, "w", encoding="utf-8") as out_f:
         for i, batch in enumerate(batches):
             batch_len = sum(len(p) for p in batch)
+            batch_start = time.monotonic()
             if len(batch) == 1 and is_table(batch[0]):
                 print(f"[{i + 1}/{len(batches)}] 표 번역 중 ({batch_len}자)", file=sys.stderr)
                 translated = translate_table(client, config["model"], system_prompt, config["temperature"], batch[0])
@@ -387,8 +395,9 @@ def main() -> None:
                 )
             out_f.write(translated.strip() + "\n\n")
             out_f.flush()
+            print(f"[{i + 1}/{len(batches)}] {time.monotonic() - batch_start:.1f}초 걸림", file=sys.stderr)
 
-    print(f"번역 완료: {args.output}", file=sys.stderr)
+    print(f"번역 완료: {args.output} (총 {time.monotonic() - run_start:.1f}초)", file=sys.stderr)
 
 
 if __name__ == "__main__":
