@@ -32,7 +32,7 @@ def _http_get(url: str) -> bytes:
 _last_arxiv_request_time = 0.0
 
 
-def _arxiv_get(url: str, max_retries: int = 5) -> bytes:
+def _arxiv_get(url: str, max_retries: int = 8) -> bytes:
     """arXiv는 요청 사이 최소 3초 간격을 권장한다. 429든 타임아웃이든 실패하면 backoff 후 재시도한다."""
     global _last_arxiv_request_time
     for attempt in range(max_retries):
@@ -193,7 +193,14 @@ def select_all_categories(config: dict) -> dict[str, dict]:
     results: dict[str, dict] = {}
     for cat in config["categories"]:
         code = cat["code"]
-        candidates = fetch_arxiv_candidates(code, window_days, pool_size)
+        # arXiv 쪽이 일시적으로 불안정해 이 분야 요청이 재시도까지 다 소진해도, 다른
+        # 분야까지 통째로 날리지 않고 이 분야만 건너뛰고 계속 진행한다 (translate.yml의
+        # 분야별 격리와 같은 원칙).
+        try:
+            candidates = fetch_arxiv_candidates(code, window_days, pool_size)
+        except Exception as e:
+            print(f"[{code}] arXiv 후보 조회 실패(재시도 소진), 이번 주는 건너뜀: {type(e).__name__}: {e}", file=sys.stderr)
+            continue
         selected = select_paper(candidates, upvotes, chosen_ids, max_pages)
         if selected is None:
             print(f"[{code}] 후보 없음 (전부 중복/페이지 초과이거나 기간 내 제출이 없음)", file=sys.stderr)
