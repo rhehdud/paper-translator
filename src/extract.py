@@ -37,6 +37,54 @@ def count_pages(pdf_path: Path) -> int:
     return len(PdfReader(str(pdf_path)).pages)
 
 
+# 정상적으로 짝이 맞는 $$...$$/$...$ 구간을 찾는 패턴 (translate.py의 MATH_SPAN_RE와 동일 기준).
+MATH_SPAN_RE = re.compile(r"\$\$.*?\$\$|\$[^$\n]+\$", re.DOTALL)
+
+
+def escape_orphan_dollars(markdown_text: str) -> str:
+    """참고문헌 제목 등에 "$200k"처럼 화폐 단위로 쓰인 단독 $ 기호가 섞여 있으면,
+    수식이 아닌데도 수식 시작 기호로 오인되어 그 뒤로 문서 전체의 $...$/$$...$$ 짝
+    인식이 밀려버리고 렌더링이 통째로 깨진다. 정상적으로 짝이 맞는 구간을 먼저 찾고,
+    거기 포함되지 않은 나머지 $는 모두 \\$로 이스케이프해 리터럴 문자로 처리한다."""
+    out: list[str] = []
+    last_end = 0
+    for m in MATH_SPAN_RE.finditer(markdown_text):
+        out.append(markdown_text[last_end : m.start()].replace("$", "\\$"))
+        out.append(m.group(0))
+        last_end = m.end()
+    out.append(markdown_text[last_end:].replace("$", "\\$"))
+    return "".join(out)
+
+
+HEADING_LINE_RE = re.compile(r"^(#{1,6})[ \t]+(.*)$")
+NUMBERED_HEADING_RE = re.compile(r"^(\d+(?:\.\d+)*)\.?\s")
+
+
+def normalize_heading_levels(markdown_text: str) -> str:
+    """Marker가 PDF 안 글꼴 크기만 보고 헤딩 레벨(#의 개수)을 추측하다 보니, 같은
+    깊이의 절이 서로 다른 레벨로 뽑히는 경우가 흔하다 (예: "2.2.2"는 H2인데 바로
+    다음 "2.2.3"은 H4로 뽑혀 같은 깊이인데 글씨 크기가 달라짐). 논문 절 제목에는
+    이미 "2.2.3"처럼 번호가 붙어 있으므로, 그 번호의 점 개수(계층 깊이)로 진짜
+    레벨을 계산해 Marker가 추측한 레벨을 덮어쓴다. 번호가 없는 헤딩(Abstract,
+    References 등)은 판단할 근거가 없으므로 그대로 둔다."""
+    lines = markdown_text.split("\n")
+    fixed: list[str] = []
+    for line in lines:
+        heading_match = HEADING_LINE_RE.match(line)
+        if not heading_match:
+            fixed.append(line)
+            continue
+        text = heading_match.group(2)
+        num_match = NUMBERED_HEADING_RE.match(text)
+        if not num_match:
+            fixed.append(line)
+            continue
+        depth = num_match.group(1).count(".") + 1
+        level = min(depth + 1, 6)  # H1은 publish.py가 붙이는 페이지 제목 전용
+        fixed.append("#" * level + " " + text)
+    return "\n".join(fixed)
+
+
 TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
 
 
@@ -192,7 +240,11 @@ def main() -> None:
     # 인라인으로 잘못 처리되는 걸 막기 위해 빈 줄 정규화를 적용한다.
     raw_md = (out_dir / md_path.name).read_text(encoding="utf-8")
     (out_dir / md_path.name).unlink()
-    normalized_md = normalize_equation_spacing(normalize_anchor_spacing(normalize_table_spacing(raw_md)))
+    normalized_md = normalize_equation_spacing(
+        normalize_anchor_spacing(
+            normalize_table_spacing(normalize_heading_levels(escape_orphan_dollars(raw_md)))
+        )
+    )
     (out_dir / "extracted.md").write_text(normalized_md, encoding="utf-8")
 
     print(f"추출 완료: {out_dir} (이미지 포함)", file=sys.stderr)
