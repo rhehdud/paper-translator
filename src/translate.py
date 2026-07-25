@@ -30,6 +30,23 @@ UNTRANSLATED_MIN_ENGLISH_WORDS = 5  # 수식 위주 문단은 LaTeX 명령어 �
 UNTRANSLATED_MAX_ATTEMPTS = 3  # 이 실패 모드는 서버 문제가 아니라 내용 문제라, 오래·여러 번 재시도해도 잘 안 바뀐다
 UNTRANSLATED_RETRY_WAIT = 2.0
 
+# 논문 안에 인용된 프롬프트/지시문(예: LLM-as-a-Judge 평가 템플릿)을 모델이 자기한테
+# 내려진 지시로 착각해서, 번역 대신 안전 거부 응답을 그대로 내놓는 경우가 있다.
+# 길이나 참고문헌 여부와 무관하게 항상 걸러내야 한다.
+REFUSAL_PATTERNS = (
+    "i'm sorry, but i can't",
+    "i'm sorry, but i cannot",
+    "i am sorry, but i can't",
+    "i am sorry, but i cannot",
+    "i can't help with that",
+    "i cannot help with that",
+    "i can't help with this",
+    "i cannot assist with",
+    "as an ai language model",
+    "i'm not able to help",
+    "i am not able to help",
+)
+
 
 def _looks_like_references(paragraph: str) -> bool:
     """참고문헌·인용이 빽빽한 문단은 프롬프트 규칙상 원래 원어 그대로 남는 게 정상이라
@@ -38,12 +55,29 @@ def _looks_like_references(paragraph: str) -> bool:
     return len(CITATION_LINK_RE.findall(paragraph)) >= 3 or len(CITATION_YEAR_RE.findall(paragraph)) >= 3
 
 
+def _looks_like_refusal(translated: str) -> bool:
+    """번역 결과가 실제 번역이 아니라 모델의 안전 거부 응답인지 확인한다."""
+    lowered = translated.lower().replace("’", "'")
+    return any(pat in lowered for pat in REFUSAL_PATTERNS)
+
+
+def _dollar_count_mismatch(original: str, translated: str) -> bool:
+    """모델이 수식 안의 \\$ 기호를 하나 빠뜨리거나 더하면 \\$...\\$ 짝이 어긋나서, 그
+    문단뿐 아니라 그 뒤로 문서 전체의 수식 렌더링까지 줄줄이 밀려 깨지는 심각한
+    문제가 생긴다 (실제로 발견됨). 원문과 번역문의 \\$ 개수가 다르면 실패로 본다."""
+    return original.count("$") != translated.count("$")
+
+
 def _looks_untranslated(original: str, translated: str) -> bool:
-    """구분자 개수는 맞는데 모델이 번역 대신 원문을 그대로 돌려주는 경우가 있다.
-    원문이 충분히 긴 산문인데 번역 결과에 한글이 사실상 없으면 번역이 안 된 것으로
-    본다. 참고문헌처럼 원래 한글이 거의 없는 게 정상인 짧은/인용 밀집 항목이나,
-    수식($...$/$$...$$)이 대부분이라 실제 번역 대상 영어 산문이 거의 없는 문단까지
-    오탐하지 않도록 수식을 걷어낸 뒤 진짜 영어 단어가 충분히 남아있을 때만 판단한다."""
+    """구분자 개수는 맞는데 모델이 번역 대신 원문을 그대로 돌려주거나(특히 수식·참고문헌이
+    아닌 일반 산문에서), 논문에 인용된 프롬프트에 헷갈려 안전 거부 응답을 내놓는 경우가
+    있다. 거부 응답은 길이·내용과 무관하게 항상 실패로 본다. 그 외에는, 원문이 충분히
+    긴 산문인데 번역 결과에 한글이 사실상 없으면 번역이 안 된 것으로 본다. 참고문헌처럼
+    원래 한글이 거의 없는 게 정상인 짧은/인용 밀집 항목이나, 수식($...$/$$...$$)이
+    대부분이라 실제 번역 대상 영어 산문이 거의 없는 문단까지 오탐하지 않도록 수식을
+    걷어낸 뒤 진짜 영어 단어가 충분히 남아있을 때만 판단한다."""
+    if _looks_like_refusal(translated):
+        return True
     non_math_original = MATH_SPAN_RE.sub(" ", original)
     if len(non_math_original) < UNTRANSLATED_CHECK_MIN_LEN:
         return False
@@ -175,6 +209,13 @@ def _translate_parts(
                     file=sys.stderr,
                 )
                 return _bisect_and_translate(client, model, system_prompt, temperature, paragraphs, max_retries)
+            if any(_dollar_count_mismatch(src, out) for src, out in zip(paragraphs, parts)):
+                print(
+                    f"번역 응답 중 일부에서 수식 \\$ 개수가 원문과 다름 ({len(paragraphs)}개 항목 배치) "
+                    "-- 절반으로 나눠 재번역",
+                    file=sys.stderr,
+                )
+                return _bisect_and_translate(client, model, system_prompt, temperature, paragraphs, max_retries)
             return parts
         except Exception as e:
             wait = min(60, 2**attempt)
@@ -243,8 +284,9 @@ def translate_table(
 def _translate_single(
     client: OpenAI, model: str, system_prompt: str, temperature: float, paragraph: str, max_retries: int
 ) -> str:
-    last_untranslated: str | None = None
-    untranslated_attempts = 0
+    last_bad_content: str | None = None
+    dollar_mismatch_seen = False  # 이게 한 번이라도 걸리면, 마지막에 절대 그 응답을 채택하면 안 된다
+    bad_attempts = 0
     for attempt in range(max_retries):
         try:
             content, finish_reason = _call_model(client, model, system_prompt, temperature, paragraph)
@@ -252,28 +294,42 @@ def _translate_single(
                 # 문단 하나가 그 자체로 모델 컨텍스트 한도를 넘김 -- 더 이상 쪼갤 단위가 없어
                 # "축소·요약 금지" 원칙을 지킬 방법이 없으므로 조용히 넘어가지 않고 실패시킨다.
                 raise RuntimeError("응답이 컨텍스트 한도로 잘렸는데 더 이상 쪼갤 수 없는 단일 문단입니다")
+
             if _looks_untranslated(paragraph, content):
-                last_untranslated = content
-                untranslated_attempts += 1
-                # 이건 서버 오류가 아니라 내용 문제라, 길게(최대 60초씩) 여러 번 재시도해봐야
-                # 잘 안 바뀐다 -- 낭비를 줄이려고 훨씬 적은 횟수·짧은 대기로 따로 제한한다.
-                if untranslated_attempts >= UNTRANSLATED_MAX_ATTEMPTS:
-                    break
-                print(
-                    f"번역 결과에 한글이 거의 없음(번역 안 되고 원문이 그대로 돌아온 것으로 보임) "
-                    f"-- {UNTRANSLATED_RETRY_WAIT}초 후 재시도 ({untranslated_attempts}/{UNTRANSLATED_MAX_ATTEMPTS})",
-                    file=sys.stderr,
+                reason = "번역 결과에 한글이 거의 없음(번역 안 되고 원문이 그대로 돌아온 것으로 보임)"
+            elif _dollar_count_mismatch(paragraph, content):
+                reason = (
+                    f"수식 \\$ 개수가 원문과 다름 (원문 {paragraph.count('$')}개 / 번역 {content.count('$')}개) "
+                    "-- 방치하면 뒤쪽 수식 렌더링까지 다 깨짐"
                 )
-                time.sleep(UNTRANSLATED_RETRY_WAIT)
-                continue
-            return content
+                dollar_mismatch_seen = True
+            else:
+                return content
+
+            last_bad_content = content
+            bad_attempts += 1
+            # 이건 서버 오류가 아니라 내용 문제라, 길게(최대 60초씩) 여러 번 재시도해봐야
+            # 잘 안 바뀐다 -- 낭비를 줄이려고 훨씬 적은 횟수·짧은 대기로 따로 제한한다.
+            if bad_attempts >= UNTRANSLATED_MAX_ATTEMPTS:
+                break
+            print(f"{reason} -- {UNTRANSLATED_RETRY_WAIT}초 후 재시도 ({bad_attempts}/{UNTRANSLATED_MAX_ATTEMPTS})", file=sys.stderr)
+            time.sleep(UNTRANSLATED_RETRY_WAIT)
         except Exception as e:
             wait = min(60, 2**attempt)
             cause = e.__cause__ or e.__context__
             detail = f"{type(e).__name__}: {e}" + (f" | 원인: {type(cause).__name__}: {cause}" if cause else "")
             print(f"번역 실패 (시도 {attempt + 1}/{max_retries}): {detail} -- {wait}초 후 재시도", file=sys.stderr)
             time.sleep(wait)
-    if last_untranslated is not None:
+    if dollar_mismatch_seen:
+        # \$ 짝이 안 맞는 응답을 그대로 쓰면 이 문단뿐 아니라 문서 전체 수식 렌더링이
+        # 밀려서 깨지므로, 절대 채택하지 않고 원문(항상 \$ 짝이 맞음)을 그대로 둔다.
+        print(
+            "경고: 여러 번 재시도해도 수식 \\$ 개수가 안 맞아서, 문서 전체 렌더링이 깨지는 걸 막기 위해 "
+            "이 문단은 번역하지 않고 원문 그대로 둡니다",
+            file=sys.stderr,
+        )
+        return paragraph
+    if last_bad_content is not None:
         # 여러 번 재시도해도 계속 원문 그대로 돌아온다 -- 참고문헌처럼 의도적으로 번역
         # 대상이 아닐 수도 있으므로, 전체 파이프라인을 실패시키는 대신 경고만 남기고
         # 마지막 응답을 그대로 채택한다.
@@ -282,7 +338,7 @@ def _translate_single(
             "(참고문헌 등 의도적 미번역 대상일 수 있음)",
             file=sys.stderr,
         )
-        return last_untranslated
+        return last_bad_content
     raise RuntimeError("번역 재시도 한도를 초과했습니다")
 
 
