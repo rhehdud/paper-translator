@@ -85,6 +85,48 @@ def normalize_heading_levels(markdown_text: str) -> str:
     return "\n".join(fixed)
 
 
+PSEUDOCODE_STEP_RE = re.compile(r"^\s*\d+:\s")
+
+
+def _is_pseudocode_paragraph(paragraph: str) -> bool:
+    stripped = paragraph.strip()
+    if stripped.startswith("```") and stripped.endswith("```") and len(stripped) >= 6:
+        inner = stripped[3:-3]
+        return any(PSEUDOCODE_STEP_RE.match(line) for line in inner.split("\n"))
+    first_line = stripped.split("\n", 1)[0]
+    return bool(PSEUDOCODE_STEP_RE.match(first_line))
+
+
+def _strip_code_fence(paragraph: str) -> str:
+    stripped = paragraph.strip()
+    if stripped.startswith("```") and stripped.endswith("```") and len(stripped) >= 6:
+        return stripped[3:-3].strip("\n")
+    return stripped
+
+
+def normalize_pseudocode_blocks(markdown_text: str) -> str:
+    """Marker가 "1: ...", "2: ..."처럼 번호 붙은 의사코드 단계를 뽑을 때, 첫 줄만
+    코드 블록(```)으로 감싸고 나머지 단계는 각각 독립된 문단으로 흩어놓는 경우가
+    있다. 이러면 코드 서식이 깨질 뿐 아니라, 문단 안 LaTeX 명령어가 $ 없이 그대로
+    노출되어 렌더링이 지저분해진다. "N:"으로 시작하는 문단(또는 그런 줄을 담은
+    코드 블록)이 연속으로 나오면 하나의 코드 블록으로 합친다."""
+    paragraphs = markdown_text.split("\n\n")
+    out: list[str] = []
+    i = 0
+    n = len(paragraphs)
+    while i < n:
+        if _is_pseudocode_paragraph(paragraphs[i]):
+            block: list[str] = []
+            while i < n and _is_pseudocode_paragraph(paragraphs[i]):
+                block.append(_strip_code_fence(paragraphs[i]))
+                i += 1
+            out.append("```\n" + "\n".join(block) + "\n```")
+            continue
+        out.append(paragraphs[i])
+        i += 1
+    return "\n\n".join(out)
+
+
 TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
 
 
@@ -242,7 +284,9 @@ def main() -> None:
     (out_dir / md_path.name).unlink()
     normalized_md = normalize_equation_spacing(
         normalize_anchor_spacing(
-            normalize_table_spacing(normalize_heading_levels(escape_orphan_dollars(raw_md)))
+            normalize_table_spacing(
+                normalize_heading_levels(normalize_pseudocode_blocks(escape_orphan_dollars(raw_md)))
+            )
         )
     )
     (out_dir / "extracted.md").write_text(normalized_md, encoding="utf-8")
