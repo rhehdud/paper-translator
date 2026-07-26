@@ -73,7 +73,8 @@ def escape_orphan_dollars(markdown_text: str) -> str:
 
 
 HEADING_LINE_RE = re.compile(r"^(#{1,6})[ \t]+(.*)$")
-NUMBERED_HEADING_RE = re.compile(r"^(\d+(?:\.\d+)*)\.?\s")
+# 번호 앞에 <span id="..."></span> 앵커나 **/* 강조 마커가 붙는 경우가 있어 건너뛰고 매칭한다.
+NUMBERED_HEADING_RE = re.compile(r"^(?:<span[^>]*>\s*</span>\s*)*(?:\*{1,2}|_{1,2})?(\d+(?:\.\d+)*)\.?\s")
 
 
 def normalize_heading_levels(markdown_text: str) -> str:
