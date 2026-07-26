@@ -52,10 +52,19 @@ REFUSAL_PATTERNS = (
 )
 
 
+LIST_ITEM_START_RE = re.compile(r"^[-*]\s")
+
+
 def _looks_like_references(paragraph: str) -> bool:
-    """참고문헌·인용이 빽빽한 문단은 프롬프트 규칙상 원래 원어 그대로 남는 게 정상이라
-    (미번역 대상), 이런 문단까지 "번역 안 됨"으로 오탐하면 끝없이 재시도만 하다 시간을
-    낭비하게 된다."""
+    """실제 참고문헌 "목록" 항목(Marker가 각 서지 항목을 "- [n] ..." 리스트로 뽑아낸 것)만
+    미번역 검사에서 제외한다. 관련 연구·논의 등 일반 본문 문단은 인용을 여러 개 걸치더라도
+    실제로는 번역이 필요한 산문이며, 리스트 항목이 아니면 인용 개수가 아무리 많아도 절대
+    제외하지 않는다. (예전엔 인용 개수만 보고 판단해서, 인용이 빽빽한 본문 문단이 통째로
+    영어 원문 그대로 방치되거나 심지어 중국어로 오역된 채 검증 없이 그대로 발행된 사례가
+    실제 발견됨 — 리스트 마커 유무로 39개 파일 전수 검사해 회귀 없음을 확인.)"""
+    first_line = paragraph.lstrip().split("\n", 1)[0]
+    if not LIST_ITEM_START_RE.match(first_line):
+        return False
     return len(CITATION_LINK_RE.findall(paragraph)) >= 3 or len(CITATION_YEAR_RE.findall(paragraph)) >= 3
 
 
