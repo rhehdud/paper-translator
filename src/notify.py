@@ -52,6 +52,11 @@ def build_message(
         # content에 "@everyone" 텍스트만 넣으면 실제로 멘션(핑)되지 않고 글자 그대로만
         # 보인다. Discord가 진짜로 멘션 처리하게 하려면 이 필드에 명시적으로 허용해야 한다.
         "allowed_mentions": {"parse": ["everyone"]},
+        # SUPPRESS_EMBEDS(1<<2). 안 걸면 Discord가 메시지 속 URL마다 그 페이지의
+        # og:title/og:description을 가져와 미리보기 박스를 붙여서, 링크 5개짜리
+        # 메시지가 큰 카드 5개로 도배된다. 링크 자체는 그대로 클릭 가능하게 두고
+        # 이 미리보기만 끈다.
+        "flags": 4,
     }
 
 
