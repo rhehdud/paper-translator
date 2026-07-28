@@ -74,6 +74,17 @@ def copy_images_and_rewrite_refs(translated_body: str, source_dir: Path, page_im
     return IMAGE_REF_RE.sub(_rewrite, translated_body)
 
 
+def remove_existing_pages(out_dir: Path, arxiv_id: str) -> None:
+    """같은 arxiv_id로 이미 발행된 페이지가 있으면 지운다 (파일명의 날짜가 달라도).
+    재번역할 때마다 파일명에 오늘 날짜가 들어가 예전 버전과 나란히 중복 발행되던
+    문제를 막고, 항상 최신 번역이 그 논문의 유일한 발행본이 되게 한다."""
+    for existing in out_dir.glob(f"*-{arxiv_id}-*"):
+        if existing.is_dir():
+            shutil.rmtree(existing)
+        else:
+            existing.unlink()
+
+
 def build_page(paper: dict, translated_body: str) -> str:
     today = date.today().isoformat()
     translated_title = extract_translated_title(translated_body, paper["title"])
@@ -114,6 +125,7 @@ def main() -> None:
     category_dir = CATEGORY_DIR_NAMES.get(paper["category"], paper["category"].replace(".", "_"))
     out_dir = Path(args.docs_dir) / category_dir
     out_dir.mkdir(parents=True, exist_ok=True)
+    remove_existing_pages(out_dir, paper["id"])
 
     today = date.today().isoformat()
     page_stem = f"{today}-{paper['id']}-{slugify(paper['title'])}"
