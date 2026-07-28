@@ -19,10 +19,46 @@ permissions:
   actions: read # 다른 워크플로 실행의 아티팩트를 gh run download로 받아오려면 필요 (자동 발급)
 
 jobs:
-  translate:
+  resolve_source:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # GitHub 호스팅 러너 잡의 플랫폼 하드 리밋(6시간)까지 최대한 여유
+    outputs:
+      run_id: ${{ steps.source.outputs.run_id }}
+    steps:
+      - name: 대상 추출 실행 ID 확인
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id="${{ github.event.inputs.run_id }}"
+          if [ -z "$run_id" ]; then
+            if [ "${{ github.event_name }}" = "workflow_run" ]; then
+              run_id="${{ github.event.workflow_run.id }}"
+            else
+              run_id=$(gh run list --repo "${{ github.repository }}" --workflow "weekly.yml" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+            fi
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "번역 대상 추출 실행: $run_id"
+
+  # 분야별로 완전히 독립된 job(순차 실행)으로 처리한다. 예전엔 5개 분야를 job 하나가
+  # 순서대로 돌면서 360분 예산을 통째로 공유했는데, 그중 하나(특히 부록이 지저분한
+  # 논문)가 유난히 오래 걸리면 뒤에 남은 분야까지 전부 취소되는 사고가 반복됐다
+  # (실제로 여러 번 발생). 분야마다 job을 나누면: (1) 각자 독립된 타임아웃을 가져서
+  # 하나가 오래 걸려도 다른 분야를 잡아먹지 않고, (2) job마다 체크아웃을 새로 하므로
+  # "오래된 체크아웃으로 있다가 push 충돌" 문제도 자연히 사라진다(각 job이 시작할 때
+  # 직전 분야가 이미 커밋한 최신 main을 그대로 받아온다).
+  translate:
+    needs: resolve_source
+    runs-on: ubuntu-latest
+    # 분야별 독립 예산. 최악의 경우(5개 다 타임아웃)에도 5*180=15시간으로, 배포
+    # 스케줄(월요일 09:00 KST)까지의 33시간 버퍼 안에 충분히 들어온다.
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false # 한 분야가 실패/타임아웃해도 나머지 분야는 계속 처리한다.
+      max-parallel: 1 # 여러 job이 동시에 같은 브랜치에 push하면 충돌하므로 반드시 순차 실행.
+      matrix:
+        category: [cs_AI, cs_CL, cs_CV, cs_LG, cs_RO]
     steps:
       - uses: actions/checkout@v7
 
@@ -34,73 +70,83 @@ jobs:
 
       - run: pip install -r requirements-translate.txt
 
-      - name: 대상 추출 실행 ID 확인
-        id: source
+      - name: 이 분야 아티팩트 받기
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          run_id="${{ github.event.inputs.run_id }}"
-          if [ -z "$run_id" ]; then
-            if [ "${{ github.event_name }}" = "workflow_run" ]; then
-              run_id="${{ github.event.workflow_run.id }}"
-            else
-              run_id=$(gh run list --workflow "weekly.yml" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          mkdir -p selected "extracted/${{ matrix.category }}"
+          gh run download "${{ needs.resolve_source.outputs.run_id }}" --name selected-papers --dir selected
+          gh run download "${{ needs.resolve_source.outputs.run_id }}" \
+            --name "extracted-${{ matrix.category }}" --dir "extracted/${{ matrix.category }}" \
+            || echo "이 분야는 추출 아티팩트가 없음(페이지 상한 초과 등으로 애초에 건너뛴 분야)"
+
+      - name: 이미 발행됐는지 확인
+        id: check
+        run: |
+          selected_file="selected/selected_${{ matrix.category }}.json"
+          if [ ! -f "$selected_file" ]; then
+            echo "이번 주 이 분야는 선정된 논문이 없음, 건너뜀"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            # 지난 주 결과가 data/last_run에 남아있으면, 이번 주엔 이 분야가 선정 안
+            # 됐는데도 알림(notify.py)이 지난 주 논문을 "이번 주 것"처럼 읽어갈 수
+            # 있으므로 지운다.
+            stale_file="data/last_run/selected_${{ matrix.category }}.json"
+            if [ -f "$stale_file" ]; then
+              git config user.name "paper-translator-bot"
+              git config user.email "bot@users.noreply.github.com"
+              git rm "$stale_file"
+              git commit -m "chore: 이번 주 미선정 분야(${{ matrix.category }}) 지난 결과 정리"
+              git push
             fi
+            exit 0
           fi
-          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-          echo "번역 대상 추출 실행: $run_id"
+          arxiv_id=$(python3 -c "import json; print(json.load(open('$selected_file'))['id'])")
+          # 같은 주에 이 워크플로가 여러 번 실행돼도(재시도, 중복 트리거 등), 이미 이
+          # arxiv_id로 발행된 페이지가 있으면 처음부터 다시 번역하지 않고 건너뛴다.
+          if find docs -name "*-${arxiv_id}-*.md" 2>/dev/null | grep -q .; then
+            echo "arXiv ${arxiv_id}는 이미 발행되어 있음, 건너뜀"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: 추출 아티팩트 전부 내려받기
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p selected extracted
-          gh run download "${{ steps.source.outputs.run_id }}" --name selected-papers --dir selected
-
-          gh api "repos/${{ github.repository }}/actions/runs/${{ steps.source.outputs.run_id }}/artifacts" --paginate \
-            --jq '.artifacts[].name' | grep '^extracted-' | while read -r artifact_name; do
-            category="${artifact_name#extracted-}"
-            gh run download "${{ steps.source.outputs.run_id }}" --name "$artifact_name" --dir "extracted/${category}"
-          done
-
-      - name: 분야별 순차 번역·발행 (분야 하나 끝날 때마다 바로 커밋)
+      - name: 번역·발행·커밋
+        if: steps.check.outputs.skip != 'true'
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
-          rm -rf data/last_run
-          mkdir -p data/last_run
+          category="${{ matrix.category }}"
+          selected_file="selected/selected_${category}.json"
+          extracted_file="extracted/${category}/extracted.md"
 
           git config user.name "paper-translator-bot"
           git config user.email "bot@users.noreply.github.com"
 
-          for selected_file in selected/selected_*.json; do
-            [ -e "$selected_file" ] || continue
-            category=$(basename "$selected_file" .json | sed 's/^selected_//')
-            extracted_file="extracted/${category}/extracted.md"
+          if [ ! -f "$extracted_file" ]; then
+            echo "=== [$category] 추출 결과 없음(페이지 상한 초과 등으로 건너뜀) ==="
+            exit 0
+          fi
 
-            if [ -f "$extracted_file" ]; then
-              echo "=== [$category] 번역 시작 ==="
-              # 번역본도 같은 폴더에 써서, 이미지가 옆에 그대로 남아있게 함
-              # 이 논문 번역이 재시도까지 다 소진하고 실패해도, 다른 분야까지 통째로
-              # 날리지 않고 이 분야만 건너뛰고 계속 진행한다 (하나라도 성공시키는 게 우선).
-              if ! python src/translate.py --input "$extracted_file" --output "extracted/${category}/translated.md"; then
-                echo "=== [$category] 번역 실패(재시도 소진), 이번 주는 건너뜀 ==="
-                continue
-              fi
-              python src/publish.py \
-                --selected "$selected_file" \
-                --translated "extracted/${category}/translated.md" \
-                --source-dir "extracted/${category}" \
-                --docs-dir docs
-              cp "$selected_file" data/last_run/
-              date -u +%Y-%m-%dT%H:%M:%SZ > data/last_run/generated_at.txt
+          echo "=== [$category] 번역 시작 ==="
+          if ! python src/translate.py --input "$extracted_file" --output "extracted/${category}/translated.md"; then
+            echo "=== [$category] 번역 실패(재시도 소진), 이번 주는 건너뜀 ==="
+            exit 0
+          fi
 
-              # 분야 하나가 끝나는 즉시 커밋·푸시한다. 이후 다른 분야가 실패하거나
-              # 잡 자체가 취소돼도, 이미 성공한 번역은 여기서 이미 저장소에 남아 있다.
-              git add docs data/last_run
-              git commit -m "docs: $category 번역 추가 $(date -u +%Y-%m-%d)" || echo "커밋할 변경 없음"
-              git push
-            else
-              echo "=== [$category] 추출 결과 없음(페이지 상한 초과 등으로 건너뜀) ==="
-            fi
-          done
+          python src/publish.py \
+            --selected "$selected_file" \
+            --translated "extracted/${category}/translated.md" \
+            --source-dir "extracted/${category}" \
+            --docs-dir docs
+
+          # data/last_run은 분야별로 파일 하나씩이라, 통째로 지우지 않고 이 분야 것만
+          # 갱신한다 (예전엔 시작할 때 rm -rf로 통째로 비웠는데, 분야별 job으로 나눈
+          # 지금은 그러면 직전에 다른 job이 이미 커밋해 둔 다른 분야 파일까지 이 job의
+          # 커밋에서 "삭제됨"으로 잡혀버린다).
+          mkdir -p data/last_run
+          cp "$selected_file" data/last_run/
+          date -u +%Y-%m-%dT%H:%M:%SZ > data/last_run/generated_at.txt
+
+          git add docs data/last_run
+          git commit -m "docs: $category 번역 추가 $(date -u +%Y-%m-%d)" || echo "커밋할 변경 없음"
+          git push
