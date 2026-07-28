@@ -74,7 +74,11 @@ def escape_orphan_dollars(markdown_text: str) -> str:
 
 HEADING_LINE_RE = re.compile(r"^(#{1,6})[ \t]+(.*)$")
 # 번호 앞에 <span id="..."></span> 앵커나 **/* 강조 마커가 붙는 경우가 있어 건너뛰고 매칭한다.
-NUMBERED_HEADING_RE = re.compile(r"^(?:<span[^>]*>\s*</span>\s*)*(?:\*{1,2}|_{1,2})?(\d+(?:\.\d+)*)\.?\s")
+# 번호 뒤에도 "**4.2.** 제목"처럼 닫는 강조 마커가 공백 앞에 올 수 있어 마찬가지로 건너뛴다
+# (실제로 이 경우만 못 잡아서 4.2가 형제 섹션과 다른 레벨로 나온 사례 발견됨).
+NUMBERED_HEADING_RE = re.compile(
+    r"^(?:<span[^>]*>\s*</span>\s*)*(?:\*{1,2}|_{1,2})?(\d+(?:\.\d+)*)\.?(?:\*{1,2}|_{1,2})?\s"
+)
 
 
 def normalize_heading_levels(markdown_text: str) -> str:
