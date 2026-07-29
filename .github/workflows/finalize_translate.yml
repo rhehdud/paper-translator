@@ -1,0 +1,30 @@
+name: Finalize translation batch
+
+on:
+  workflow_run:
+    workflows: ["Translate (cs_RO)"]
+    types: [completed]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  record_generated_at:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # "이번 주 배치가 언제 마지막으로 갱신됐는지"를 나타내는 단일 타임스탬프라 분야별로
+      # 나눌 필요가 없다(notify.py가 신선도 체크·발행일 폴백에 씀). 예전엔 분야별 job이
+      # 각자 이 파일을 써서 커밋했는데, 그러면 5개 분야가 전부 같은 파일을 건드리게 돼
+      # rebase 시 매번 충돌이 났다. 체인의 맨 마지막에서 딱 한 번만 쓰도록 분리했다.
+      - name: 이번 처리 완료 시각 기록
+        run: |
+          git config user.name "paper-translator-bot"
+          git config user.email "bot@users.noreply.github.com"
+          mkdir -p data/last_run
+          date -u +%Y-%m-%dT%H:%M:%SZ > data/last_run/generated_at.txt
+          git add data/last_run/generated_at.txt
+          git commit -m "chore: 이번 처리 완료 시각 기록" || echo "커밋할 변경 없음"
+          git push

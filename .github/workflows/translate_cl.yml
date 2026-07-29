@@ -1,0 +1,21 @@
+name: Translate (cs_CL)
+
+on:
+  workflow_run:
+    workflows: ["Translate (cs_AI)"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "번역할 대상 'Weekly paper processing' 실행 ID (비우면 가장 최근 성공 실행)"
+        required: false
+
+jobs:
+  translate:
+    # 앞 분야(cs_AI)가 실패/타임아웃해도 이 분야는 계속 진행한다 (fail-fast:false와 동일한 취지).
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion != 'cancelled' }}
+    uses: ./.github/workflows/_translate_category.yml
+    with:
+      category: cs_CL
+      run_id: ${{ github.event.inputs.run_id || '' }}
+    secrets: inherit

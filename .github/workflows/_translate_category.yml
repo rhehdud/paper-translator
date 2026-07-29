@@ -1,0 +1,122 @@
+name: Translate one category (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      category:
+        description: "cs_AI, cs_CL, cs_CV, cs_LG, cs_RO 중 하나"
+        required: true
+        type: string
+      run_id:
+        description: "번역할 대상 'Weekly paper processing' 실행 ID (비우면 가장 최근 성공 실행)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  actions: read # 다른 워크플로 실행의 아티팩트를 gh run download로 받아오려면 필요 (자동 발급)
+
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+    # 분야마다 GitHub 호스팅 러너의 하드 리밋(6시간)까지 독립적으로 받는다. 이 워크플로는
+    # 분야별로 완전히 별도의 워크플로 실행(run)으로 호출되고, 다음 분야는 이 실행이 끝난
+    # 뒤 workflow_run으로 체이닝되어 새로 트리거되므로, actions/checkout이 그 시점의
+    # "현재 main"을 그대로 받는다(ref를 명시하지 않으면 트리거 시점의 기본 브랜치 최신
+    # 커밋을 체크아웃한다) - 그래서 앞선 분야가 이미 push해 둔 커밋을 놓치는 일이 없고,
+    # push 직전에 별도로 pull·rebase할 필요도 없다.
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-translate.txt
+
+      - run: pip install -r requirements-translate.txt
+
+      - name: 대상 추출 실행 ID 확인
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id="${{ inputs.run_id }}"
+          if [ -z "$run_id" ]; then
+            run_id=$(gh run list --repo "${{ github.repository }}" --workflow "weekly.yml" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "번역 대상 추출 실행: $run_id"
+
+      - name: 이 분야 아티팩트 받기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p selected "extracted/${{ inputs.category }}"
+          gh run download "${{ steps.source.outputs.run_id }}" --name selected-papers --dir selected
+          gh run download "${{ steps.source.outputs.run_id }}" \
+            --name "extracted-${{ inputs.category }}" --dir "extracted/${{ inputs.category }}" \
+            || echo "이 분야는 추출 아티팩트가 없음(페이지 상한 초과 등으로 애초에 건너뛴 분야)"
+
+      - name: 이번 주 선정 여부 확인
+        id: check
+        run: |
+          selected_file="selected/selected_${{ inputs.category }}.json"
+          if [ ! -f "$selected_file" ]; then
+            echo "이번 주 이 분야는 선정된 논문이 없음, 건너뜀"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            # 지난 주 결과가 data/last_run에 남아있으면, 이번 주엔 이 분야가 선정 안
+            # 됐는데도 알림(notify.py)이 지난 주 논문을 "이번 주 것"처럼 읽어갈 수
+            # 있으므로 지운다.
+            stale_file="data/last_run/selected_${{ inputs.category }}.json"
+            if [ -f "$stale_file" ]; then
+              git config user.name "paper-translator-bot"
+              git config user.email "bot@users.noreply.github.com"
+              git rm "$stale_file"
+              git commit -m "chore: 이번 주 미선정 분야(${{ inputs.category }}) 지난 결과 정리"
+              git push
+            fi
+            exit 0
+          fi
+          # 이 분야가 이번 주에 선정됐다면 항상 재번역·재발행한다(이미 같은 arxiv_id로
+          # 발행된 페이지가 있어도 건너뛰지 않고 덮어쓴다 - publish.py가 처리). 재시도나
+          # 부분 실패 후 재실행 시에도 매번 5개 분야 전부를 처음부터 새로 처리해서,
+          # "일부만 성공한 상태"가 굳어지지 않게 한다.
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: 번역·발행·커밋
+        if: steps.check.outputs.skip != 'true'
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          category="${{ inputs.category }}"
+          selected_file="selected/selected_${category}.json"
+          extracted_file="extracted/${category}/extracted.md"
+
+          git config user.name "paper-translator-bot"
+          git config user.email "bot@users.noreply.github.com"
+
+          if [ ! -f "$extracted_file" ]; then
+            echo "=== [$category] 추출 결과 없음(페이지 상한 초과 등으로 건너뜀) ==="
+            exit 0
+          fi
+
+          echo "=== [$category] 번역 시작 ==="
+          if ! python src/translate.py --input "$extracted_file" --output "extracted/${category}/translated.md"; then
+            echo "=== [$category] 번역 실패(재시도 소진), 이번 주는 건너뜀 ==="
+            exit 0
+          fi
+
+          python src/publish.py \
+            --selected "$selected_file" \
+            --translated "extracted/${category}/translated.md" \
+            --source-dir "extracted/${category}" \
+            --docs-dir docs
+
+          mkdir -p data/last_run
+          cp "$selected_file" data/last_run/
+
+          git add docs data/last_run
+          git commit -m "docs: $category 번역 추가 $(date -u +%Y-%m-%d)" || echo "커밋할 변경 없음"
+          git push
