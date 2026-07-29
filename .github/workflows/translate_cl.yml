@@ -10,6 +10,10 @@ on:
         description: "번역할 대상 'Weekly paper processing' 실행 ID (비우면 가장 최근 성공 실행)"
         required: false
 
+permissions:
+  contents: write
+  actions: read
+
 jobs:
   translate:
     # 앞 분야(cs_AI)가 실패/타임아웃해도 이 분야는 계속 진행한다 (fail-fast:false와 동일한 취지).

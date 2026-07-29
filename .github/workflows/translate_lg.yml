@@ -10,6 +10,10 @@ on:
         description: "번역할 대상 'Weekly paper processing' 실행 ID (비우면 가장 최근 성공 실행)"
         required: false
 
+permissions:
+  contents: write
+  actions: read
+
 jobs:
   translate:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion != 'cancelled' }}
