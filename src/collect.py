@@ -53,44 +53,65 @@ def _arxiv_get(url: str, max_retries: int = 8) -> bytes:
     raise RuntimeError("arXiv 요청 재시도 한도를 초과했습니다")
 
 
-def fetch_arxiv_candidates(category: str, window_days: int, pool_size: int) -> list[dict]:
-    query = urllib.parse.urlencode(
-        {
-            "search_query": f"cat:{category}",
-            "sortBy": "submittedDate",
-            "sortOrder": "descending",
-            "max_results": pool_size,
-        }
-    )
-    xml_bytes = _arxiv_get(f"{ARXIV_API}?{query}")
-    root = ET.fromstring(xml_bytes)
+def fetch_arxiv_candidates(category: str, window_days: int, page_size: int) -> list[dict]:
+    """window_days 전체를 커버할 때까지 최신순으로 페이지를 계속 넘겨서 후보를 모은다.
 
+    예전엔 max_results=pool_size(=20)로 딱 한 번만 조회했는데, cs.CL/cs.AI처럼
+    투고량이 많은 카테고리는 몇 시간 안에 20편이 다 채워져서 candidate_window_days가
+    사실상 무시됐다(실측: 상위 20편이 하루도 안 되는 기간에서 나옴). 결과가 이미
+    submittedDate 내림차순이므로, cutoff보다 오래된 항목을 만나는 순간 이후 페이지는
+    전부 더 오래된 것들뿐이라 그 즉시 멈출 수 있다.
+    """
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=window_days)
     candidates = []
-    for entry in root.findall("atom:entry", ATOM_NS):
-        arxiv_url = entry.find("atom:id", ATOM_NS).text.strip()
-        arxiv_id = re.sub(r"v\d+$", "", arxiv_url.rsplit("/", 1)[-1])
-        published = datetime.datetime.fromisoformat(
-            entry.find("atom:published", ATOM_NS).text.replace("Z", "+00:00")
-        )
-        if published < cutoff:
-            continue
-        title = " ".join(entry.find("atom:title", ATOM_NS).text.split())
-        summary = " ".join(entry.find("atom:summary", ATOM_NS).text.split())
-        pdf_url = None
-        for link in entry.findall("atom:link", ATOM_NS):
-            if link.get("title") == "pdf":
-                pdf_url = link.get("href")
-        candidates.append(
+    start = 0
+    while True:
+        query = urllib.parse.urlencode(
             {
-                "id": arxiv_id,
-                "title": title,
-                "summary": summary,
-                "abs_url": f"https://arxiv.org/abs/{arxiv_id}",
-                "pdf_url": pdf_url or f"https://arxiv.org/pdf/{arxiv_id}",
-                "published": published.isoformat(),
+                "search_query": f"cat:{category}",
+                "sortBy": "submittedDate",
+                "sortOrder": "descending",
+                "start": start,
+                "max_results": page_size,
             }
         )
+        xml_bytes = _arxiv_get(f"{ARXIV_API}?{query}")
+        root = ET.fromstring(xml_bytes)
+        entries = root.findall("atom:entry", ATOM_NS)
+        if not entries:
+            break
+
+        reached_cutoff = False
+        for entry in entries:
+            arxiv_url = entry.find("atom:id", ATOM_NS).text.strip()
+            arxiv_id = re.sub(r"v\d+$", "", arxiv_url.rsplit("/", 1)[-1])
+            published = datetime.datetime.fromisoformat(
+                entry.find("atom:published", ATOM_NS).text.replace("Z", "+00:00")
+            )
+            if published < cutoff:
+                reached_cutoff = True
+                break
+            title = " ".join(entry.find("atom:title", ATOM_NS).text.split())
+            summary = " ".join(entry.find("atom:summary", ATOM_NS).text.split())
+            pdf_url = None
+            for link in entry.findall("atom:link", ATOM_NS):
+                if link.get("title") == "pdf":
+                    pdf_url = link.get("href")
+            candidates.append(
+                {
+                    "id": arxiv_id,
+                    "title": title,
+                    "summary": summary,
+                    "abs_url": f"https://arxiv.org/abs/{arxiv_id}",
+                    "pdf_url": pdf_url or f"https://arxiv.org/pdf/{arxiv_id}",
+                    "published": published.isoformat(),
+                }
+            )
+
+        if reached_cutoff or len(entries) < page_size:
+            break
+        start += page_size
+
     return candidates
 
 
@@ -181,7 +202,7 @@ def load_published_ids(docs_dir: str) -> set[str]:
 def select_all_categories(config: dict) -> dict[str, dict]:
     """분야별로 1편씩, 이미 다른 분야/지난주에 뽑힌 논문은 제외하고 선정한다."""
     window_days = config["candidate_window_days"]
-    pool_size = config["candidate_pool_size"]
+    page_size = config["candidate_page_size"]
     upvotes = fetch_hf_upvotes(window_days)
 
     docs_dir = config.get("publish", {}).get("docs_dir", "docs")
@@ -197,7 +218,7 @@ def select_all_categories(config: dict) -> dict[str, dict]:
         # 분야까지 통째로 날리지 않고 이 분야만 건너뛰고 계속 진행한다 (translate.yml의
         # 분야별 격리와 같은 원칙).
         try:
-            candidates = fetch_arxiv_candidates(code, window_days, pool_size)
+            candidates = fetch_arxiv_candidates(code, window_days, page_size)
         except Exception as e:
             print(f"[{code}] arXiv 후보 조회 실패(재시도 소진), 이번 주는 건너뜀: {type(e).__name__}: {e}", file=sys.stderr)
             continue

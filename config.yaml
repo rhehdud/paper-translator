@@ -17,8 +17,9 @@ papers_per_category: 1
 # 최근 며칠 내 제출된 논문을 후보로 볼지
 candidate_window_days: 7
 
-# arXiv 후보 중 상위 몇 편까지 조회해서 HF Daily Papers와 대조할지
-candidate_pool_size: 20
+# arXiv 조회 1페이지당 가져올 개수(페이지네이션 단위). candidate_window_days 전체를
+# 커버할 때까지 이 크기로 계속 다음 페이지를 가져온다 - 후보 수를 제한하는 값이 아니다.
+candidate_page_size: 200
 
 selection:
   # primary: HF Daily Papers에 업보트로 등재된 후보 중 최고 업보트
