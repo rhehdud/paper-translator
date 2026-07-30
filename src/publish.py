@@ -137,6 +137,14 @@ def main() -> None:
     out_path = out_dir / f"{page_stem}.md"
     out_path.write_text(build_page(paper, translated_body), encoding="utf-8")
 
+    # notify.py가 이 파일명에 실제로 쓰인 날짜를 그대로 링크에 쓸 수 있도록,
+    # 발행일을 selected 파일에도 남긴다. 분야마다 처리 시각이 달라 자정을 넘길 수
+    # 있어서, 체인 전체에 공통인 타임스탬프 하나로는 각 논문의 실제 발행일을
+    # 재구성할 수 없다.
+    paper["published_date"] = today
+    with open(args.selected, "w", encoding="utf-8") as f:
+        json.dump(paper, f, ensure_ascii=False, indent=2)
+
     print(f"발행 완료: {out_path}")
 
 
