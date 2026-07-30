@@ -12,7 +12,7 @@ on:
 
 permissions:
   contents: write
-  actions: read
+  actions: write # 다음 분야 워크플로를 gh workflow run으로 직접 트리거하려면 write 필요
 
 jobs:
   translate:
@@ -22,3 +22,17 @@ jobs:
       category: cs_AI
       run_id: ${{ github.event.inputs.run_id || '' }}
     secrets: inherit
+
+  # workflow_run 체이닝은 3단계까지만 지원돼서(weekly->ai->cl->cv까지는 되고 그 다음부터
+  # 안 됨 - 실제로 겪음), 다음 분야는 여기서 API로 직접 dispatch한다.
+  trigger_next:
+    needs: translate
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 다음 분야(cs_CL) 트리거
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run translate_cl.yml --repo "${{ github.repository }}" \
+            -f run_id="${{ needs.translate.outputs.run_id }}"

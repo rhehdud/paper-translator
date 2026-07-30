@@ -1,9 +1,7 @@
 name: Finalize translation batch
 
 on:
-  workflow_run:
-    workflows: ["Translate (cs_RO)"]
-    types: [completed]
+  # cs_RO가 gh workflow run으로 직접 트리거한다 (workflow_run 체이닝 3단계 제한 때문).
   workflow_dispatch: {}
 
 permissions:

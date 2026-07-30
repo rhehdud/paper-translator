@@ -1,9 +1,8 @@
 name: Translate (cs_CL)
 
 on:
-  workflow_run:
-    workflows: ["Translate (cs_AI)"]
-    types: [completed]
+  # 앞 분야(cs_AI)가 gh workflow run으로 직접 트리거한다 (workflow_run 체이닝은 3단계
+  # 제한이 있어서 안 씀 - weekly->ai->cl->cv까지는 되고 그 다음부터 안 되는 걸 실제로 겪음).
   workflow_dispatch:
     inputs:
       run_id:
@@ -12,14 +11,24 @@ on:
 
 permissions:
   contents: write
-  actions: read
+  actions: write
 
 jobs:
   translate:
-    # 앞 분야(cs_AI)가 실패/타임아웃해도 이 분야는 계속 진행한다 (fail-fast:false와 동일한 취지).
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion != 'cancelled' }}
     uses: ./.github/workflows/_translate_category.yml
     with:
       category: cs_CL
       run_id: ${{ github.event.inputs.run_id || '' }}
     secrets: inherit
+
+  trigger_next:
+    needs: translate
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 다음 분야(cs_CV) 트리거
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run translate_cv.yml --repo "${{ github.repository }}" \
+            -f run_id="${{ needs.translate.outputs.run_id }}"

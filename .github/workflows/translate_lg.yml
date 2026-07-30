@@ -1,9 +1,7 @@
 name: Translate (cs_LG)
 
 on:
-  workflow_run:
-    workflows: ["Translate (cs_CV)"]
-    types: [completed]
+  # 앞 분야(cs_CV)가 gh workflow run으로 직접 트리거한다 (workflow_run 체이닝 3단계 제한 때문).
   workflow_dispatch:
     inputs:
       run_id:
@@ -12,13 +10,24 @@ on:
 
 permissions:
   contents: write
-  actions: read
+  actions: write
 
 jobs:
   translate:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion != 'cancelled' }}
     uses: ./.github/workflows/_translate_category.yml
     with:
       category: cs_LG
       run_id: ${{ github.event.inputs.run_id || '' }}
     secrets: inherit
+
+  trigger_next:
+    needs: translate
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 다음 분야(cs_RO) 트리거
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run translate_ro.yml --repo "${{ github.repository }}" \
+            -f run_id="${{ needs.translate.outputs.run_id }}"
