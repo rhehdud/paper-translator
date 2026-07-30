@@ -398,7 +398,11 @@ def main() -> None:
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--config", default="config.yaml")
-    parser.add_argument("--max-chars", type=int, default=4000, help="배치당 최대 문자 수")
+    # 4000자대 배치는 생성에 4~5분씩 걸려 300초 타임아웃 경계에 자주 걸렸다(로컬
+    # 반복 테스트로 실측: 3700~4100자 배치 5개 중 3개가 정확히 300초에서 타임아웃,
+    # 2183자 배치는 109초로 여유 있게 성공). 배치를 작게 나눠 요청당 생성 시간을
+    # 줄여서 타임아웃에 걸릴 여지를 줄인다.
+    parser.add_argument("--max-chars", type=int, default=2000, help="배치당 최대 문자 수")
     args = parser.parse_args()
 
     with open(args.config, encoding="utf-8") as f:
