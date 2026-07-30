@@ -1,0 +1,16 @@
+name: Chain test 4
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  actions: write
+
+jobs:
+  step:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "4 실행됨"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run _chain_test_5.yml --repo "${{ github.repository }}"
