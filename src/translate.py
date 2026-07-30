@@ -39,27 +39,21 @@ UNTRANSLATED_MIN_ENGLISH_WORDS = 5  # 수식 위주 문단은 LaTeX 명령어 �
 UNTRANSLATED_MAX_ATTEMPTS = 5  # 이제 배치 전체가 아니라 문제 문단만 개별 재시도라 비용이 작아, 여유를 좀 더 둠
 UNTRANSLATED_RETRY_WAIT = 2.0
 
-# 모델이 헤더 앞뒤에 실제 줄바꿈 대신 리터럴 "\n" 두 글자를 그대로 출력하는 경우가
-# 실제로 발견됨 (예: "\n## 4 구성요소 (Components)\n\n"). 그대로 두면 "\n" 텍스트가
-# 화면에 그대로 노출되고 헤더도 렌더링되지 않는다.
-ESCAPED_HEADING_LINE_RE = re.compile(r"^(?:\\n)*(#{1,6}[ \t].*)$")
+# 모델이 실제 줄바꿈 대신 리터럴 "\n" 두 글자를 그대로 출력하는 경우가 있다. 처음엔
+# 헤더 앞뒤에서만 발견돼(예: "\n## 4 구성요소 (Components)\n\n") 헤더 줄에만 대응하는
+# 좁은 정규식으로 고쳤는데, 나중에 저자·소속·링크 목록 같은 일반 본문 줄에서도 똑같이
+# 나오는 게 발견됨(예: "앱: ...\n 홈페이지: ...\n"). 그래서 헤더 여부와 무관하게 코드
+# 블록 밖 전체에서 리터럴 "\n"을 실제 줄바꿈으로 바꾼다. 코드 블록 안의 "\n"은 실제
+# 코드(예: 파이썬 문자열 리터럴)일 수 있으므로 건드리지 않는다.
+CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 
 
-def fix_escaped_heading_lines(text: str) -> str:
-    """리터럴 "\\n"이 헤더 줄 앞에 하나 이상 붙어 있으면 걷어내고, 뒤에 남은 리터럴
-    "\\n"들도 전부 제거한다 (실제 파일에서 헤더 텍스트 뒤에 "\\n"이 하나만 남거나 두 개
-    다 남는 등 개수가 일정하지 않아 정규식 하나로 한 번에 처리하지 않고 while로 확실히 다 벗겨낸다)."""
-    result = []
-    for line in text.split("\n"):
-        m = ESCAPED_HEADING_LINE_RE.match(line)
-        if not m:
-            result.append(line)
-            continue
-        heading = m.group(1)
-        while heading.endswith("\\n"):
-            heading = heading[:-2]
-        result.append(heading)
-    return "\n".join(result)
+def fix_escaped_newlines(text: str) -> str:
+    """코드 블록 밖에서 리터럴 "\\n"을 실제 줄바꿈으로 치환한다."""
+    parts = re.split(r"(```.*?```)", text, flags=re.DOTALL)
+    for i in range(0, len(parts), 2):
+        parts[i] = parts[i].replace("\\n", "\n")
+    return "".join(parts)
 
 # 논문 안에 인용된 프롬프트/지시문(예: LLM-as-a-Judge 평가 템플릿)을 모델이 자기한테
 # 내려진 지시로 착각해서, 번역 대신 안전 거부 응답을 그대로 내놓는 경우가 있다.
@@ -444,7 +438,7 @@ def main() -> None:
                 translated = translate_paragraphs(
                     client, config["model"], system_prompt, config["temperature"], batch
                 )
-            out_f.write(fix_escaped_heading_lines(translated.strip()) + "\n\n")
+            out_f.write(fix_escaped_newlines(translated.strip()) + "\n\n")
             out_f.flush()
             print(f"[{i + 1}/{len(batches)}] {time.monotonic() - batch_start:.1f}초 걸림", file=sys.stderr)
 
