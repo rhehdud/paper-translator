@@ -29,6 +29,11 @@ UNTRANSLATED_CHECK_MIN_LEN = 100
 CITATION_LINK_RE = re.compile(r"\[[^\]]*(?:19|20)\d{2}[^\]]*\]\([^)]+\)")
 CITATION_YEAR_RE = re.compile(r"\((?:19|20)\d{2}[a-z]?\)")
 MATH_SPAN_RE = re.compile(r"\$\$.*?\$\$|\$[^$\n]+\$", re.DOTALL)
+# 모델이 가끔 복잡한 수식(특히 행렬 곱 등)에서 짧은 토큰을 수백 번씩 그대로 반복하는
+# 폭주(runaway repetition) 응답을 낸다 (실제로 발견: "\mathbf{M}_{r} \\"가 500번 이상
+# 반복돼 16000자 넘는 깨진 수식 블록이 그대로 발행된 사례). 글자가 있는 토큰이 15번
+# 이상 연속 반복되면 이걸로 본다 - 표 구분선("---")처럼 글자 없는 반복은 정상이라 제외.
+RUNAWAY_REPEAT_RE = re.compile(r"(.{3,80}?)(?:\1){14,}")
 ENGLISH_WORD_RE = re.compile(r"[a-zA-Z]{3,}")
 UNTRANSLATED_MIN_ENGLISH_WORDS = 5  # 수식 위주 문단은 LaTeX 명령어 몇 개 빼면 실제 영어 단어가 거의 없다
 UNTRANSLATED_MAX_ATTEMPTS = 5  # 이제 배치 전체가 아니라 문제 문단만 개별 재시도라 비용이 작아, 여유를 좀 더 둠
@@ -101,6 +106,14 @@ def _dollar_count_mismatch(original: str, translated: str) -> bool:
     문단뿐 아니라 그 뒤로 문서 전체의 수식 렌더링까지 줄줄이 밀려 깨지는 심각한
     문제가 생긴다 (실제로 발견됨). 원문과 번역문의 \\$ 개수가 다르면 실패로 본다."""
     return original.count("$") != translated.count("$")
+
+
+def _has_runaway_repetition(translated: str) -> bool:
+    """짧은 토큰(글자 포함)이 15번 이상 연속 반복되면 폭주 응답으로 본다."""
+    for m in RUNAWAY_REPEAT_RE.finditer(translated):
+        if re.search(r"[A-Za-z가-힣]", m.group(1)):
+            return True
+    return False
 
 
 def _looks_untranslated(original: str, translated: str) -> bool:
@@ -326,7 +339,7 @@ def _translate_single(
     client: OpenAI, model: str, system_prompt: str, temperature: float, paragraph: str, max_retries: int
 ) -> str:
     last_bad_content: str | None = None
-    dollar_mismatch_seen = False  # 이게 한 번이라도 걸리면, 마지막에 절대 그 응답을 채택하면 안 된다
+    never_adopt_seen = False  # 이게 한 번이라도 걸리면, 마지막에 절대 그 응답을 채택하면 안 된다
     bad_attempts = 0
     for attempt in range(max_retries):
         try:
@@ -343,7 +356,10 @@ def _translate_single(
                     f"수식 \\$ 개수가 원문과 다름 (원문 {paragraph.count('$')}개 / 번역 {content.count('$')}개) "
                     "-- 방치하면 뒤쪽 수식 렌더링까지 다 깨짐"
                 )
-                dollar_mismatch_seen = True
+                never_adopt_seen = True
+            elif _has_runaway_repetition(content):
+                reason = "번역 응답이 같은 토큰을 수십~수백 번 반복하는 폭주 상태로 보임"
+                never_adopt_seen = True
             else:
                 return content
 
@@ -361,11 +377,11 @@ def _translate_single(
             detail = f"{type(e).__name__}: {e}" + (f" | 원인: {type(cause).__name__}: {cause}" if cause else "")
             print(f"번역 실패 (시도 {attempt + 1}/{max_retries}): {detail} -- {wait}초 후 재시도", file=sys.stderr)
             time.sleep(wait)
-    if dollar_mismatch_seen:
-        # \$ 짝이 안 맞는 응답을 그대로 쓰면 이 문단뿐 아니라 문서 전체 수식 렌더링이
-        # 밀려서 깨지므로, 절대 채택하지 않고 원문(항상 \$ 짝이 맞음)을 그대로 둔다.
+    if never_adopt_seen:
+        # \$ 짝이 안 맞거나 토큰이 폭주한 응답을 그대로 쓰면 이 문단뿐 아니라 문서 전체
+        # 렌더링까지 밀려서 깨지므로, 절대 채택하지 않고 원문을 그대로 둔다.
         print(
-            "경고: 여러 번 재시도해도 수식 \\$ 개수가 안 맞아서, 문서 전체 렌더링이 깨지는 걸 막기 위해 "
+            "경고: 여러 번 재시도해도 수식 깨짐/폭주 응답이 반복돼서, 문서 전체 렌더링이 깨지는 걸 막기 위해 "
             "이 문단은 번역하지 않고 원문 그대로 둡니다",
             file=sys.stderr,
         )
