@@ -39,6 +39,30 @@ UNTRANSLATED_MIN_ENGLISH_WORDS = 5  # 수식 위주 문단은 LaTeX 명령어 �
 UNTRANSLATED_MAX_ATTEMPTS = 5  # 이제 배치 전체가 아니라 문제 문단만 개별 재시도라 비용이 작아, 여유를 좀 더 둠
 UNTRANSLATED_RETRY_WAIT = 2.0
 
+# 문단 전체는 한글이 충분히 섞여 있어 _looks_untranslated를 통과하더라도, 그 안의 문장
+# 하나(또는 절 제목 뒤 문단 전체)만 원문 그대로 남는 경우가 실제로 발견됨(예: 수식 정의
+# 문장 하나만 영어 그대로, 혹은 소제목만 번역되고 그 뒤 문단 전체가 원문 그대로 발행됨).
+# 한글이 전혀 없는 구간이 길고 실제 영어 단어도 많으면 그 구간만 미번역으로 본다. 표
+# 셀이나 참고문헌의 URL/doi가 섞인 구간은 영어 고유명사·링크가 정상이므로 제외한다.
+HANGUL_RUN_RE = re.compile(r"[가-힣]+")
+UNTRANSLATED_RUN_MIN_CHARS = 100
+UNTRANSLATED_RUN_MIN_ENGLISH_WORDS = 10
+URL_OR_DOI_RE = re.compile(r"https?://|doi:|arxiv:", re.IGNORECASE)
+# 저자·참가자 명단("Lei Xiong, Jiahao Wang, ...")처럼 원래 번역 대상이 아닌 고유명사
+# 나열은 길고 영어 단어 수도 많아 위 두 조건만으로는 오탐한다(실제 확인됨). 실제
+# 문장이라면 the/and/of 같은 기능어가 반드시 여러 번 나오지만, 이름 나열에는 전혀
+# 없다는 점으로 구분한다.
+ENGLISH_FUNCTION_WORD_RE = re.compile(
+    r"\b(?:the|and|of|is|are|in|to|with|for|on|that|this|from|by|as|we|our|which|its|be|can|not)\b",
+    re.IGNORECASE,
+)
+UNTRANSLATED_RUN_MIN_FUNCTION_WORDS = 3
+
+# 모델이 실제 빈 줄 대신 "(blank line)"이라는 문구를 그 자리에 그대로 출력하는 경우가
+# 있다(실제 발견: 절 제목 바로 다음 줄에 "(blank line)"이 텍스트 그대로 발행됨). 형식을
+# 말로 설명한 것이지 내용이 아니므로 방치하면 그 문구 자체가 페이지에 그대로 노출된다.
+LITERAL_BLANK_LINE_RE = re.compile(r"^\s*[\(\[]\s*blank\s*line\s*[\)\]]\s*$", re.IGNORECASE | re.MULTILINE)
+
 # 모델이 실제 줄바꿈 대신 리터럴 "\n" 두 글자를 그대로 출력하는 경우가 있다. 처음엔
 # 헤더 앞뒤에서만 발견돼(예: "\n## 4 구성요소 (Components)\n\n") 헤더 줄에만 대응하는
 # 좁은 정규식으로 고쳤는데, 나중에 저자·소속·링크 목록 같은 일반 본문 줄에서도 똑같이
@@ -129,6 +153,32 @@ def _looks_untranslated(original: str, translated: str) -> bool:
     if len(ENGLISH_WORD_RE.findall(non_math_translated)) < UNTRANSLATED_MIN_ENGLISH_WORDS:
         return False
     return len(HANGUL_RE.findall(non_math_translated)) < 5
+
+
+def _has_untranslated_run(original: str, translated: str) -> bool:
+    """문단 전체는 한글이 충분해 _looks_untranslated를 통과하더라도, 그 안의 문장 하나나
+    소제목 뒤 문단 전체만 원문 그대로 남는 경우를 잡는다. 표·참고문헌 항목은 영어 고유
+    명사·URL이 정상이므로 통째로 제외하고, 그 외 구간은 URL/doi가 섞여 있지 않으면서
+    한글 없이 충분히 길고 실제 문장 형태(the/and 같은 기능어 포함)일 때만 미번역으로 본다
+    (저자·참가자 명단처럼 고유명사만 나열된 경우는 기능어가 없어 걸러짐)."""
+    if is_table(original) or _looks_like_references(original):
+        return False
+    non_math = MATH_SPAN_RE.sub(" ", translated)
+    for run in HANGUL_RUN_RE.split(non_math):
+        if URL_OR_DOI_RE.search(run):
+            continue
+        if (
+            len(run) >= UNTRANSLATED_RUN_MIN_CHARS
+            and len(ENGLISH_WORD_RE.findall(run)) >= UNTRANSLATED_RUN_MIN_ENGLISH_WORDS
+            and len(ENGLISH_FUNCTION_WORD_RE.findall(run)) >= UNTRANSLATED_RUN_MIN_FUNCTION_WORDS
+        ):
+            return True
+    return False
+
+
+def _has_literal_blank_line_marker(translated: str) -> bool:
+    """모델이 실제 빈 줄 대신 "(blank line)" 문구를 그 자리에 그대로 출력했는지 확인한다."""
+    return bool(LITERAL_BLANK_LINE_RE.search(translated))
 
 
 def load_system_prompt(path: str) -> str:
@@ -252,7 +302,11 @@ def _translate_parts(
             bad_indices = [
                 i
                 for i, (src, out) in enumerate(zip(paragraphs, parts))
-                if _looks_untranslated(src, out) or _dollar_count_mismatch(src, out)
+                if _looks_untranslated(src, out)
+                or _has_untranslated_run(src, out)
+                or _dollar_count_mismatch(src, out)
+                or _has_runaway_repetition(out)
+                or _has_literal_blank_line_marker(out)
             ]
             if bad_indices:
                 print(
@@ -345,6 +399,8 @@ def _translate_single(
 
             if _looks_untranslated(paragraph, content):
                 reason = "번역 결과에 한글이 거의 없음(번역 안 되고 원문이 그대로 돌아온 것으로 보임)"
+            elif _has_untranslated_run(paragraph, content):
+                reason = "번역 결과 중 일부 구간이 통째로 원문 영어 그대로 남음(문단 전체는 번역됐지만 문장 일부 누락)"
             elif _dollar_count_mismatch(paragraph, content):
                 reason = (
                     f"수식 \\$ 개수가 원문과 다름 (원문 {paragraph.count('$')}개 / 번역 {content.count('$')}개) "
@@ -353,6 +409,9 @@ def _translate_single(
                 never_adopt_seen = True
             elif _has_runaway_repetition(content):
                 reason = "번역 응답이 같은 토큰을 수십~수백 번 반복하는 폭주 상태로 보임"
+                never_adopt_seen = True
+            elif _has_literal_blank_line_marker(content):
+                reason = '번역 결과에 실제 빈 줄 대신 "(blank line)" 같은 문구가 그대로 남음'
                 never_adopt_seen = True
             else:
                 return content
