@@ -1,0 +1,102 @@
+name: Extract one category (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      category:
+        description: "cs_AI, cs_CL, cs_CV, cs_LG, cs_RO 중 하나"
+        required: true
+        type: string
+      run_id:
+        description: "대상 'Weekly paper processing' 실행 ID (비우면 가장 최근 성공 실행)"
+        required: false
+        type: string
+    outputs:
+      run_id:
+        description: "실제로 사용한 'Weekly paper processing' 실행 ID (다음 분야·번역 체인에 그대로 넘겨서 체인 내내 같은 소스를 쓰게 함)"
+        value: ${{ jobs.extract.outputs.run_id }}
+
+permissions:
+  contents: read
+  actions: read # 다른 워크플로 실행의 아티팩트를 gh run download로 받아오려면 필요 (자동 발급)
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    outputs:
+      run_id: ${{ steps.source.outputs.run_id }}
+    # 분야마다 GitHub 호스팅 러너의 하드 리밋(6시간)까지 독립적으로 받는다. marker의
+    # --use_llm이 NVIDIA NIM 무료 엔드포인트를 쓰므로, translate와 똑같은 이유로
+    # 분야를 완전히 별도의 워크플로 실행으로 분리한다(matrix + max-parallel 같은
+    # job 레벨 설정만으로는 부족하다는 걸 이미 translate.yml에서 겪었다).
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-extract.txt
+
+      - name: 대상 수집 실행 ID 확인
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id="${{ inputs.run_id }}"
+          if [ -z "$run_id" ]; then
+            run_id=$(gh run list --repo "${{ github.repository }}" --workflow "weekly.yml" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "추출 대상 수집 실행: $run_id"
+
+      - name: 이 분야 선정 결과 받기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p selected
+          gh run download "${{ steps.source.outputs.run_id }}" --name selected-papers --dir selected
+
+      - name: 이번 주 선정 여부 확인
+        id: check
+        run: |
+          selected_file="selected/selected_${{ inputs.category }}.json"
+          if [ ! -f "$selected_file" ]; then
+            echo "이번 주 이 분야는 선정된 논문이 없음, 건너뜀"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cache marker/surya models
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/datalab
+          key: marker-models-${{ runner.os }}
+
+      - name: Install CPU-only torch (avoid pulling multi-GB CUDA wheels on a GPU-less runner)
+        if: steps.check.outputs.skip != 'true'
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install extraction deps
+        if: steps.check.outputs.skip != 'true'
+        run: pip install -r requirements-extract.txt
+
+      - name: Extract (Marker)
+        if: steps.check.outputs.skip != 'true'
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }} # --use_llm 표·수식 보정용
+        run: |
+          python src/extract.py \
+            --selected "selected/selected_${{ inputs.category }}.json" \
+            --work-dir "work/${{ inputs.category }}" \
+            --out-dir "work/${{ inputs.category }}/output"
+
+      - uses: actions/upload-artifact@v7
+        if: steps.check.outputs.skip != 'true'
+        with:
+          name: "extracted-${{ inputs.category }}"
+          path: "work/${{ inputs.category }}/output" # 마크다운 + 이미지 전부 (extracted.md만이 아님)
+          if-no-files-found: ignore # max_pages 초과로 건너뛴 경우 파일이 없을 수 있음

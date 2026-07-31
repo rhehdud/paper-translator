@@ -1,0 +1,33 @@
+name: Extract (cs_CV)
+
+on:
+  # 앞 분야(cs_CL)가 gh workflow run으로 직접 트리거한다.
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "대상 'Weekly paper processing' 실행 ID (비우면 가장 최근 성공 실행)"
+        required: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  extract:
+    uses: ./.github/workflows/_extract_category.yml
+    with:
+      category: cs_CV
+      run_id: ${{ github.event.inputs.run_id || '' }}
+    secrets: inherit
+
+  trigger_next:
+    needs: extract
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 다음 분야(cs_LG) 트리거
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run extract_lg.yml --repo "${{ github.repository }}" \
+            -f run_id="${{ needs.extract.outputs.run_id }}"

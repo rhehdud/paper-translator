@@ -1,9 +1,10 @@
 name: Translate (cs_AI)
 
 on:
-  workflow_run:
-    workflows: ["Weekly paper processing"]
-    types: [completed]
+  # 앞 단계(Extract (cs_RO))가 gh workflow run으로 직접 트리거한다. 예전엔 여기가
+  # "Weekly paper processing" 완료를 workflow_run으로 직접 받는 체인의 시작점이었지만,
+  # 추출(extract)도 분야별로 완전히 분리되면서 그 체인의 마지막(Extract (cs_RO))이
+  # 이 자리를 넘겨받았다.
   workflow_dispatch:
     inputs:
       run_id:
@@ -16,7 +17,6 @@ permissions:
 
 jobs:
   translate:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     uses: ./.github/workflows/_translate_category.yml
     with:
       category: cs_AI

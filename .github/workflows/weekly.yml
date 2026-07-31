@@ -2,11 +2,17 @@ name: Weekly paper processing
 
 on:
   schedule:
-    # 매주 일요일 00:03 KST(=토요일 15:03 UTC) 시작.
-    # 월요일 09:00 KST 배포·알림(publish_and_notify.yml)까지 33시간 버퍼를 둬서
-    # 처리 시간이 언제 끝나든 영향받지 않게 함.
-    # 이 워크플로가 끝나면 (성공 시) translate.yml이 workflow_run으로 자동으로 이어받아 번역한다.
-    - cron: "3 15 * * 6"
+    # 매주 토요일 09:00 KST(=00:00 UTC) 시작.
+    # 월요일 09:03 KST 배포·알림(publish_and_notify.yml)까지 48시간 버퍼를 둬서(예전 33시간에서
+    # 늘림 - extract에 marker --use_llm이 붙으면서 추출 단계만으로도 카테고리당 1시간 안팎이
+    # 걸리기 시작해, 5개 분야 추출 + 5개 분야 번역이 순차로 이어지는 전체 체인이 예전보다
+    # 훨씬 길어질 수 있음) 처리 시간이 언제 끝나든 다음 주 실행과 겹치지 않게 함.
+    # 이 워크플로가 끝나면 (성공 시) extract_ai.yml이 workflow_run으로 자동으로 이어받아
+    # extract_ai -> ... -> extract_ro -> translate_ai -> ... -> translate_ro -> finalize_translate
+    # 순으로 체인이 이어진다 (분야마다 완전히 분리된 워크플로 - 하나의 워크플로에서 matrix로
+    # 돌리면 workflow_run 3단계 제한, 같은 실행의 정적 checkout 공유로 인한 git push 레이스,
+    # 공용 NVIDIA 무료 티어 동시 경합 문제가 반복된다는 걸 이미 여러 번 겪었다).
+    - cron: "0 0 * * 6"
   workflow_dispatch: {}
 
 concurrency:
@@ -19,8 +25,6 @@ permissions:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    outputs:
-      categories: ${{ steps.list.outputs.categories }}
     steps:
       - uses: actions/checkout@v7
 
@@ -34,69 +38,7 @@ jobs:
 
       - run: python src/collect.py --out-dir selected
 
-      - id: list
-        run: |
-          python3 -c "
-          import json, os
-          files = sorted(os.listdir('selected'))
-          cats = [f.replace('selected_', '').replace('.json', '') for f in files]
-          print('categories=' + json.dumps(cats))
-          " >> "$GITHUB_OUTPUT"
-
       - uses: actions/upload-artifact@v7
         with:
           name: selected-papers
           path: selected/
-
-  # marker의 --use_llm이 NVIDIA NIM 무료 엔드포인트를 쓰므로, 카테고리를 병렬로 돌리면
-  # 5개가 동시에 같은 공용 무료 티어를 두드려 번역 단계에서 이미 겪은 것과 같은 부하
-  # 문제가 재현된다. max-parallel: 1로 순차 실행해 한 번에 하나만 쓰게 한다.
-  extract:
-    needs: collect
-    runs-on: ubuntu-latest
-    timeout-minutes: 360 # GitHub 호스팅 러너 잡의 플랫폼 하드 리밋(6시간)까지 최대한 여유
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        category: ${{ fromJson(needs.collect.outputs.categories) }}
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: requirements-extract.txt
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: selected-papers
-          path: selected/
-
-      - name: Cache marker/surya models
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/datalab
-          key: marker-models-${{ runner.os }}
-
-      - name: Install CPU-only torch (avoid pulling multi-GB CUDA wheels on a GPU-less runner)
-        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
-
-      - run: pip install -r requirements-extract.txt
-
-      - name: Extract (Marker)
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-        run: |
-          python src/extract.py \
-            --selected "selected/selected_${{ matrix.category }}.json" \
-            --work-dir "work/${{ matrix.category }}" \
-            --out-dir "work/${{ matrix.category }}/output"
-
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: "extracted-${{ matrix.category }}"
-          path: "work/${{ matrix.category }}/output" # 마크다운 + 이미지 전부 (extracted.md만이 아님)
-          if-no-files-found: ignore # max_pages 초과로 건너뛴 경우 파일이 없을 수 있음
