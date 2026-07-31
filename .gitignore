@@ -1,6 +1,7 @@
 site/
 work/
 selected/
+logs/
 __pycache__/
 *.pyc
 .DS_Store
