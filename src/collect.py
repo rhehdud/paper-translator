@@ -53,7 +53,9 @@ def _arxiv_get(url: str, max_retries: int = 8) -> bytes:
     raise RuntimeError("arXiv 요청 재시도 한도를 초과했습니다")
 
 
-def fetch_arxiv_candidates(category: str, window_days: int, page_size: int) -> list[dict]:
+def fetch_arxiv_candidates(
+    category: str, window_days: int, page_size: int, reference_dt: datetime.datetime | None = None
+) -> list[dict]:
     """window_days 전체를 커버할 때까지 최신순으로 페이지를 계속 넘겨서 후보를 모은다.
 
     예전엔 max_results=pool_size(=20)로 딱 한 번만 조회했는데, cs.CL/cs.AI처럼
@@ -61,8 +63,13 @@ def fetch_arxiv_candidates(category: str, window_days: int, page_size: int) -> l
     사실상 무시됐다(실측: 상위 20편이 하루도 안 되는 기간에서 나옴). 결과가 이미
     submittedDate 내림차순이므로, cutoff보다 오래된 항목을 만나는 순간 이후 페이지는
     전부 더 오래된 것들뿐이라 그 즉시 멈출 수 있다.
-    """
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=window_days)
+
+    reference_dt를 지정하면(디버깅용 재현 실행) "지금"이 아니라 그 시점 기준으로
+    창을 계산하고, 그 시점 이후에 제출된 논문은 후보에서 제외한다 - 안 그러면 과거
+    시점을 재현하려 해도 재실행 시점 이후의 새 논문까지 섞여 들어가 그때와 다른
+    선정 결과가 나온다."""
+    reference_dt = reference_dt or datetime.datetime.now(datetime.timezone.utc)
+    cutoff = reference_dt - datetime.timedelta(days=window_days)
     candidates = []
     start = 0
     while True:
@@ -91,6 +98,8 @@ def fetch_arxiv_candidates(category: str, window_days: int, page_size: int) -> l
             if published < cutoff:
                 reached_cutoff = True
                 break
+            if published > reference_dt:
+                continue  # reference_dt 재현 실행: 그 시점 이후 제출분은 후보에서 제외
             title = " ".join(entry.find("atom:title", ATOM_NS).text.split())
             summary = " ".join(entry.find("atom:summary", ATOM_NS).text.split())
             pdf_url = None
@@ -115,11 +124,11 @@ def fetch_arxiv_candidates(category: str, window_days: int, page_size: int) -> l
     return candidates
 
 
-def fetch_hf_upvotes(window_days: int) -> dict[str, int]:
+def fetch_hf_upvotes(window_days: int, reference_date: datetime.date | None = None) -> dict[str, int]:
     upvotes: dict[str, int] = {}
-    today = datetime.date.today()
+    reference_date = reference_date or datetime.date.today()
     for offset in range(window_days + 1):
-        date_str = (today - datetime.timedelta(days=offset)).isoformat()
+        date_str = (reference_date - datetime.timedelta(days=offset)).isoformat()
         try:
             raw = _http_get(f"{HF_DAILY_PAPERS_API}?date={date_str}")
         except Exception:
@@ -199,11 +208,20 @@ def load_published_ids(docs_dir: str) -> set[str]:
     return published
 
 
-def select_all_categories(config: dict) -> dict[str, dict]:
-    """분야별로 1편씩, 이미 다른 분야/지난주에 뽑힌 논문은 제외하고 선정한다."""
+def select_all_categories(config: dict, reference_date: datetime.date | None = None) -> dict[str, dict]:
+    """분야별로 1편씩, 이미 다른 분야/지난주에 뽑힌 논문은 제외하고 선정한다.
+
+    reference_date를 지정하면 그 날짜를 "오늘"로 놓고 후보 조회·업보트 조회를 전부
+    그 시점 기준으로 재현한다(디버깅/검증 목적 - 과거 특정 실행과 같은 선정 결과를
+    다시 얻고 싶을 때. 프로덕션 주간 실행은 항상 생략해서 실제 오늘 기준으로 돈다)."""
     window_days = config["candidate_window_days"]
     page_size = config["candidate_page_size"]
-    upvotes = fetch_hf_upvotes(window_days)
+    reference_dt = (
+        datetime.datetime.combine(reference_date, datetime.time(23, 59, 59), tzinfo=datetime.timezone.utc)
+        if reference_date
+        else None
+    )
+    upvotes = fetch_hf_upvotes(window_days, reference_date)
 
     docs_dir = config.get("publish", {}).get("docs_dir", "docs")
     chosen_ids: set[str] = load_published_ids(docs_dir)
@@ -218,7 +236,7 @@ def select_all_categories(config: dict) -> dict[str, dict]:
         # 분야까지 통째로 날리지 않고 이 분야만 건너뛰고 계속 진행한다 (translate.yml의
         # 분야별 격리와 같은 원칙).
         try:
-            candidates = fetch_arxiv_candidates(code, window_days, page_size)
+            candidates = fetch_arxiv_candidates(code, window_days, page_size, reference_dt)
         except Exception as e:
             print(f"[{code}] arXiv 후보 조회 실패(재시도 소진), 이번 주는 건너뜀: {type(e).__name__}: {e}", file=sys.stderr)
             continue
@@ -237,12 +255,18 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--out-dir", required=True, help="분야별 선정 결과를 JSON으로 저장할 디렉터리")
+    parser.add_argument(
+        "--as-of-date",
+        default=None,
+        help="YYYY-MM-DD. 지정하면 이 날짜를 '오늘'로 놓고 과거 선정 결과를 재현한다 (디버깅용, 생략하면 실제 오늘)",
+    )
     args = parser.parse_args()
 
     with open(args.config, encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
-    results = select_all_categories(config)
+    reference_date = datetime.date.fromisoformat(args.as_of_date) if args.as_of_date else None
+    results = select_all_categories(config, reference_date)
 
     import os
 
