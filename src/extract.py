@@ -5,6 +5,7 @@
 """
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -239,18 +240,32 @@ def normalize_equation_spacing(markdown_text: str) -> str:
     return "".join(out)
 
 
-def run_marker(pdf_path: Path, output_dir: Path) -> Path:
-    subprocess.run(
-        [
-            _marker_single_binary(),
-            str(pdf_path),
-            "--output_dir",
-            str(output_dir),
-            "--output_format",
-            "markdown",
-        ],
-        check=True,
-    )
+def run_marker(pdf_path: Path, output_dir: Path, llm_config: dict | None = None) -> Path:
+    """llm_config가 있으면 marker의 --use_llm으로 표·수식 등을 페이지 이미지 기반으로
+    재해석시킨다. NVIDIA_API_KEY 환경변수가 없으면(로컬 실험 등) 조용히 건너뛴다."""
+    cmd = [
+        _marker_single_binary(),
+        str(pdf_path),
+        "--output_dir",
+        str(output_dir),
+        "--output_format",
+        "markdown",
+    ]
+    if llm_config:
+        api_key = os.environ.get("NVIDIA_API_KEY")
+        if api_key:
+            cmd += [
+                "--use_llm",
+                "--llm_service",
+                "marker.services.openai.OpenAIService",
+                "--openai_base_url",
+                llm_config["base_url"],
+                "--openai_model",
+                llm_config["model"],
+                "--openai_api_key",
+                api_key,
+            ]
+    subprocess.run(cmd, check=True)
     stem = pdf_path.stem
     md_path = output_dir / stem / f"{stem}.md"
     if not md_path.exists():
@@ -267,9 +282,17 @@ def main() -> None:
     parser.add_argument("--out-dir", required=True, help="마크다운+이미지를 저장할 디렉터리")
     args = parser.parse_args()
 
+    with open(args.config, encoding="utf-8") as f:
+        full_config = yaml.safe_load(f)
     if args.max_pages is None:
-        with open(args.config, encoding="utf-8") as f:
-            args.max_pages = yaml.safe_load(f)["extraction"]["max_pages"]
+        args.max_pages = full_config["extraction"]["max_pages"]
+
+    llm_config = None
+    if full_config["extraction"].get("use_llm"):
+        llm_config = {
+            "base_url": full_config["translation"]["base_url"],
+            "model": full_config["extraction"]["llm_model"],
+        }
 
     with open(args.selected, encoding="utf-8") as f:
         paper = json.load(f)
@@ -289,7 +312,7 @@ def main() -> None:
         )
         return
 
-    md_path = run_marker(pdf_path, work_dir)
+    md_path = run_marker(pdf_path, work_dir, llm_config)
     marker_output_dir = md_path.parent  # Marker가 마크다운과 이미지를 같이 뽑아둔 폴더
 
     out_dir = Path(args.out_dir)

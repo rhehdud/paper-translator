@@ -31,6 +31,13 @@ extraction:
   marker_pdf_version: "1.10.2"
   # 극단적으로 긴 논문(서베이 등)은 잡 시간 폭주를 막기 위해 상한
   max_pages: 60
+  # 표·수식 등 레이아웃이 복잡한 영역은 marker의 규칙 기반 파싱만으로 가끔 깨진다
+  # (앵커 태그·표 캡션 붙음 등, 지금 코드에 있는 여러 후처리가 그 흔적). marker의
+  # --use_llm으로 페이지 이미지를 직접 보고 재해석하게 하면 이런 걸 줄일 수 있다.
+  # translation과 같은 NVIDIA NIM 무료 엔드포인트를 재사용하되, gpt-oss-20b는
+  # 텍스트 전용이라 이미지를 못 보므로(직접 확인함) 비전 모델을 따로 지정한다.
+  use_llm: true
+  llm_model: nvidia/nemotron-nano-12b-v2-vl
 
 translation:
   provider: nvidia_nim
