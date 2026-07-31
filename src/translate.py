@@ -457,11 +457,12 @@ def main() -> None:
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--config", default="config.yaml")
-    # 4000자대 배치는 생성에 4~5분씩 걸려 300초 타임아웃 경계에 자주 걸렸다(로컬
-    # 반복 테스트로 실측: 3700~4100자 배치 5개 중 3개가 정확히 300초에서 타임아웃,
-    # 2183자 배치는 109초로 여유 있게 성공). 배치를 작게 나눠 요청당 생성 시간을
-    # 줄여서 타임아웃에 걸릴 여지를 줄인다.
-    parser.add_argument("--max-chars", type=int, default=2000, help="배치당 최대 문자 수")
+    # 한때 4000 -> 2000으로 줄였다가(300초 타임아웃 경계 완화 목적) 되돌렸다. 실제
+    # 전체 실행 시간으로 비교해보니(같은 논문, 비슷한 시간대: 4000자 배치 149분 vs
+    # 2000자 배치 236분) 요청 자체에 상당한 고정 지연이 있어서, 배치를 잘게 쪼개
+    # 요청 수를 늘리는 쪽이 오히려 총 시간을 더 늘렸다. 타임아웃 쪽(아래 300 -> 480)을
+    # 늘려서 대응하는 게 낫다.
+    parser.add_argument("--max-chars", type=int, default=4000, help="배치당 최대 문자 수")
     args = parser.parse_args()
 
     with open(args.config, encoding="utf-8") as f:
@@ -473,13 +474,16 @@ def main() -> None:
         raise SystemExit("환경변수 NVIDIA_API_KEY가 설정되어 있지 않습니다")
 
     # 90초는 너무 짧아서 정상적으로 느린(수 분 걸리는) 응답까지 타임아웃으로 죽였다.
-    # 5분으로 늘리되, SDK 자체 재시도(기본 max_retries=2)는 꺼서 아래 재시도 루프와
-    # 중첩되어 한 배치가 몇 시간씩 멎는 것만 막는다.
+    # 300초로 늘렸었는데, 실측해보니(로컬 반복 테스트) 4000자대 배치 중 정상적으로
+    # 성공하는 것도 230~293초씩 걸려 300초 경계에 바짝 붙어 있었다. 배치를 잘게
+    # 쪼개 요청 수를 늘리는 대신(고정 지연이 커서 총 시간이 더 늘어남, 실측 확인)
+    # 480초로 더 늘려 여유를 준다. SDK 자체 재시도(기본 max_retries=2)는 꺼서 아래
+    # 재시도 루프와 중첩되어 한 배치가 몇 시간씩 멎는 것만 막는다.
     # keep-alive 연결 재사용을 꺼서, 배치 사이 유휴 시간에 서버(프록시)가 먼저 끊어버린
     # 연결을 재사용하다 "Server disconnected without sending a response"가 나는 걸 막는다.
     http_client = httpx.Client(limits=httpx.Limits(max_keepalive_connections=0))
     client = OpenAI(
-        base_url=config["base_url"], api_key=api_key, timeout=300.0, max_retries=0, http_client=http_client
+        base_url=config["base_url"], api_key=api_key, timeout=480.0, max_retries=0, http_client=http_client
     )
     system_prompt = load_system_prompt(config["system_prompt_file"])
 
