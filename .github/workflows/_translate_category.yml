@@ -62,9 +62,24 @@ jobs:
         run: |
           mkdir -p selected "extracted/${{ inputs.category }}"
           gh run download "${{ steps.source.outputs.run_id }}" --name selected-papers --dir selected
-          gh run download "${{ steps.source.outputs.run_id }}" \
-            --name "extracted-${{ inputs.category }}" --dir "extracted/${{ inputs.category }}" \
-            || echo "이 분야는 추출 아티팩트가 없음(페이지 상한 초과 등으로 애초에 건너뛴 분야)"
+
+          # "extracted-${category}" 아티팩트는 weekly.yml 실행이 아니라, 그 분야를 뽑아낸
+          # 별도의 "Extract (${category})" 워크플로 실행에 업로드된다(추출도 완전히 분리된
+          # 워크플로라서). weekly run_id로 내려받으려 하면 항상 못 찾아 이 분야 번역이
+          # 매번 "추출 결과 없음"으로 조용히 건너뛰어지는 사고가 실제로 있었다 - 그 분야의
+          # extract_*.yml 실행 ID를 따로 찾아서 거기서 받는다.
+          category="${{ inputs.category }}"
+          extract_slug=$(echo "${category#cs_}" | tr '[:upper:]' '[:lower:]')
+          extract_run_id=$(gh run list --repo "${{ github.repository }}" \
+            --workflow "extract_${extract_slug}.yml" --status success --limit 1 \
+            --json databaseId --jq '.[0].databaseId')
+          if [ -z "$extract_run_id" ]; then
+            echo "이 분야는 추출 실행을 찾을 수 없음(페이지 상한 초과 등으로 애초에 건너뛴 분야)"
+          else
+            gh run download "$extract_run_id" \
+              --name "extracted-${category}" --dir "extracted/${category}" \
+              || echo "이 분야는 추출 아티팩트가 없음(페이지 상한 초과 등으로 애초에 건너뛴 분야)"
+          fi
 
       - name: 이번 주 선정 여부 확인
         id: check
