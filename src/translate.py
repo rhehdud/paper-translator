@@ -203,6 +203,22 @@ def _dollar_count_mismatch(original: str, translated: str) -> bool:
     return original.count("$") != translated.count("$")
 
 
+def _brace_count_mismatch(original: str, translated: str) -> bool:
+    """\\$ 개수는 그대로인데 수식 구간 안의 중괄호만 깨지는 경우가 있다 (실제 발견됨:
+    \\tilde{\\mathbf{w}}에서 \\mathbf{ 와 그 짝 중괄호가 통째로 사라져 \\tilde{\\w 가
+    되면서, \\frac{분자}{분모}의 분자 인자를 닫는 중괄호가 없어짐 -- 뒤에 있던 분모용
+    중괄호까지 분자 안에 삼켜져 MathJax가 파싱을 포기하고 원본 LaTeX 소스를 그대로
+    페이지에 노출시킨 사례). _dollar_count_mismatch는 \\$ 개수만 보므로 이런 손상은
+    못 잡는다. 원문과 번역문의 수식 구간(\\$...\\$/\\$\\$...\\$\\$) 안 여는/닫는
+    중괄호 개수가 각각 다르면 실패로 본다."""
+    orig_math = "".join(MATH_SPAN_RE.findall(original))
+    trans_math = "".join(MATH_SPAN_RE.findall(translated))
+    return (
+        orig_math.count("{") != trans_math.count("{")
+        or orig_math.count("}") != trans_math.count("}")
+    )
+
+
 def _has_runaway_repetition(translated: str) -> bool:
     """짧은 토큰(글자 포함)이 15번 이상 연속 반복되면 폭주 응답으로 본다."""
     for m in RUNAWAY_REPEAT_RE.finditer(translated):
@@ -542,6 +558,7 @@ def _translate_parts(
                 if _looks_untranslated(src, out)
                 or _has_untranslated_run(src, out)
                 or _dollar_count_mismatch(src, out)
+                or _brace_count_mismatch(src, out)
                 or _has_runaway_repetition(out)
                 or _has_literal_blank_line_marker(out)
             ]
@@ -734,6 +751,13 @@ def _translate_single(
                     "-- 방치하면 뒤쪽 수식 렌더링까지 다 깨짐"
                 )
                 fail_code = "dollar_mismatch"
+                never_adopt_seen = True
+            elif _brace_count_mismatch(paragraph, content):
+                reason = (
+                    "수식 구간 안 중괄호 개수가 원문과 다름 -- \\mathbf{...} 같은 명령이 "
+                    "통째로 깨져 \\frac{}{} 인자 경계가 밀리면서 뒤쪽 렌더링까지 깨질 수 있음"
+                )
+                fail_code = "brace_mismatch"
                 never_adopt_seen = True
             elif _has_runaway_repetition(content):
                 reason = "번역 응답이 같은 토큰을 수십~수백 번 반복하는 폭주 상태로 보임"
