@@ -73,6 +73,42 @@ def escape_orphan_dollars(markdown_text: str) -> str:
     return "".join(out)
 
 
+# translate.py의 RUNAWAY_REPEAT_RE와 동일 기준(짧은 토큰이 15번 이상 연속 반복되면 폭주로 봄).
+_RUNAWAY_REPEAT_RE = re.compile(r"(.{3,80}?)(?:\1){14,}")
+
+
+def _looks_broken_math(span: str) -> bool:
+    """복잡한 중첩 행렬·합 수식(예: 곱 기호 아래 여러 첨자가 겹친 행렬 곱)에서 marker의
+    수식 파싱이 실패하면, 짧은 토큰을 수백 번 그대로 반복하거나(실제 발견: Eq 17에서
+    \\mathbf{M}_r가 156회 반복) \\begin{}/\\end{} 환경을 안 닫은 채 결과를 낸다(실제
+    발견: \\begin{array}는 있는데 \\end{array}가 아예 없어 MathJax가 "Missing
+    \\end{array}" 에러를 그대로 페이지에 노출). --use_llm 여부와 무관하게 marker의
+    규칙 기반 파싱 자체에서도 발생함을 실측으로 확인함(비전 모델 환각만의 문제가
+    아니었음). 이 두 패턴 중 하나라도 있으면 이 수식 블록은 신뢰할 수 없는 것으로 본다."""
+    for m in _RUNAWAY_REPEAT_RE.finditer(span):
+        if re.search(r"[A-Za-z가-힣]", m.group(1)):
+            return True
+    return len(re.findall(r"\\begin\{", span)) != len(re.findall(r"\\end\{", span))
+
+
+def sanitize_broken_math(markdown_text: str) -> str:
+    """marker는 규칙 기반이라 번역과 달리 재시도해도 같은 결과가 나온다 -- 그래서 깨진
+    수식을 고치려 들지 않고, 감지되면 플레이스홀더로 바꿔 조용히 깨진 페이지가 발행되는
+    대신 사람이 알아채고 원본 PDF를 확인하도록 한다."""
+    def _replace(m: re.Match) -> str:
+        span = m.group(0)
+        if not _looks_broken_math(span):
+            return span
+        print(
+            f"경고: 수식 추출이 깨져(폭주 반복 또는 \\begin/\\end 환경 안 닫힘) "
+            f"플레이스홀더로 대체함 (앞부분: {span[:80]!r}...)",
+            file=sys.stderr,
+        )
+        return "`[수식 추출 실패 - 원본 PDF 참조]`"
+
+    return MATH_SPAN_RE.sub(_replace, markdown_text)
+
+
 HEADING_LINE_RE = re.compile(r"^(#{1,6})[ \t]+(.*)$")
 # 번호 앞에 <span id="..."></span> 앵커나 **/* 강조 마커가 붙는 경우가 있어 건너뛰고 매칭한다.
 # 번호 뒤에도 "**4.2.** 제목"처럼 닫는 강조 마커가 공백 앞에 올 수 있어 마찬가지로 건너뛴다
@@ -335,6 +371,7 @@ def main() -> None:
             )
         )
     )
+    normalized_md = sanitize_broken_math(normalized_md)
     (out_dir / "extracted.md").write_text(normalized_md, encoding="utf-8")
 
     print(f"추출 완료: {out_dir} (이미지 포함)", file=sys.stderr)
