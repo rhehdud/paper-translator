@@ -25,4 +25,8 @@ jobs:
           date -u +%Y-%m-%dT%H:%M:%SZ > data/last_run/generated_at.txt
           git add data/last_run/generated_at.txt
           git commit -m "chore: 이번 처리 완료 시각 기록" || echo "커밋할 변경 없음"
+          # 이 파일 자체는 이 워크플로만 쓰지만, 겹쳐 도는 다른 체인(예: 주간 cron과
+          # 수동 재실행이 겹친 경우)이 그 사이 main에 다른 커밋을 먼저 push했을 수 있어
+          # push가 "fetch first"로 거절될 수 있다. rebase로 미리 맞춘다.
+          git pull --rebase origin main
           git push

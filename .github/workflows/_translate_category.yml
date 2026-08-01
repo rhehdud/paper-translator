@@ -97,6 +97,7 @@ jobs:
               git config user.email "bot@users.noreply.github.com"
               git rm "$stale_file"
               git commit -m "chore: 이번 주 미선정 분야(${{ inputs.category }}) 지난 결과 정리"
+              git pull --rebase origin main
               git push
             fi
             exit 0
@@ -141,4 +142,11 @@ jobs:
 
           git add docs data/last_run
           git commit -m "docs: $category 번역 추가 $(date -u +%Y-%m-%d)" || echo "커밋할 변경 없음"
+
+          # actions/checkout은 이 워크플로 실행이 트리거된 시점의 커밋을 고정 체크아웃하므로,
+          # 앞선 분야(또는 겹쳐 도는 다른 체인)가 그 사이 push한 커밋을 이 job은 반영하지
+          # 못한 채로 시작한다. push 직전에 최신 main을 받아 rebase해서 "fetch first"
+          # 거절을 막는다(과거 translate.yml에 있던 수정인데, extract 분리 때 이 새
+          # 워크플로 파일로 옮기며 빠뜨렸다가 실제로 두 체인이 겹쳐 돌면서 재발함).
+          git pull --rebase origin main
           git push
