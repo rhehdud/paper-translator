@@ -1,12 +1,12 @@
 {
-  "id": "2607.28618",
-  "title": "AskChem: Claim-Centered Infrastructure for Chemistry Literature Synthesis",
-  "summary": "Chemistry literature synthesis often requires assembling specific findings scattered across many publications, yet existing literature-search systems primarily return ranked document lists. As a result, scientists and AI agents need to locate relevant information, verify their provenance, and assemble cross-paper answers manually. We present AskChem, a claim-centered infrastructure for cross-paper chemistry search. AskChem changes the unit of retrieval from the paper to the provenance-carrying claim: each paper is converted into atomic, typed claims, each grounded by a source DOI and a verbatim quote or an explicit evidence locator. Over this shared claim store, AskChem exposes complementary structures for search and synthesis: a stabilized faceted taxonomy for hierarchical retrieval and browsing, an evidence graph linking claims through relations, and an exploratory living taxonomy that situates indexed papers under scientific principles. AskChem currently indexes 2.4M claims from 147K papers and provides a web interface, as well as REST, SDK, and MCP access for AI agents. On AskChem-Bench, grounding a GPT-5.5 reader in AskChem yields 100% resolvable DOIs, compared with 88.3% without retrieval, and the highest citation density among five tested systems. AskChem is live at https://askchem.org.",
-  "abs_url": "https://arxiv.org/abs/2607.28618",
-  "pdf_url": "https://arxiv.org/pdf/2607.28618v1",
-  "published": "2026-07-30T17:59:11+00:00",
-  "selection_reason": "hf_daily_papers_upvotes=187",
-  "num_pages": 10,
+  "id": "2608.01755",
+  "title": "Deferred Exposure of Future Trajectories for Verifiable Reasoning in Autonomous Driving VLMs",
+  "summary": "Recent Vision-Language-Action (VLA) models for autonomous driving (AD) increasingly utilize chain-of-thought (CoT) supervision to enhance the reasoning capabilities of their Vision-Language Model (VLM) components, yet existing annotation pipelines commonly expose the teacher model to the logged ground-truth (GT) future trajectory. We empirically show that this induces trajectory anchoring bias: teacher models rationalize the revealed outcome rather than infer a decision from scene evidence, producing less causally faithful CoTs and substantially more severe hallucinations, especially in causally challenging scenes. Removing the GT trajectory eliminates this shortcut, but open-ended trajectory generation entangles high-level decision-making with precise geometric synthesis and low-level dynamics. To make trajectory-level driving decisions verifiable without requiring open-ended trajectory synthesis, we introduce Autonomous-Driving Multiple-Choice Question (AD-MCQ), which casts planning as selection among explicit trajectory candidates. Taking this a step further, we propose Deferred Exposure of Future Trajectories for RLVR (DEFT-RLVR) to transform future trajectories from pre-decision anchors into post-decision verification targets. Experimental results show that DEFT-RLVR improves AD reasoning while preserving or even enhancing general visual capabilities. With VLM-only inference and controllable difficulty through candidate construction, AD-MCQ provides a flexible, scalable, and extensible foundation for future research on verifiable AD reasoning.",
+  "abs_url": "https://arxiv.org/abs/2608.01755",
+  "pdf_url": "https://arxiv.org/pdf/2608.01755v2",
+  "published": "2026-08-03T06:24:36+00:00",
+  "selection_reason": "hf_daily_papers_upvotes=139",
+  "num_pages": 44,
   "category": "cs.AI",
-  "published_date": "2026-08-01"
+  "published_date": "2026-08-08"
 }
