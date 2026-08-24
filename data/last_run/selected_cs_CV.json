@@ -1,12 +1,12 @@
 {
-  "id": "2608.01964",
-  "title": "LongHorizon-Harness: Advancing Long-Horizon Agents for Real-World Tasks",
-  "summary": "Large language model (LLM) agents increasingly undertake long-horizon tasks that require sustained reasoning, tool use, and revision across many interdependent steps. However, existing agent harnesses maintain task execution, task state, and completion assessment within a growing context, making the state difficult to track and allowing incorrect self-assessments to propagate into later decisions. We reformulate long-horizon execution as a task-state management problem and propose LongHorizon-Harness, which maintains the task state explicitly outside execution and updates it only with facts independently verified from the environment. Its Manage-Execute-Audit(MEA) loop uses a manager to maintain the task state and determine the next subtask, a fresh-context executor to perform it, and a read-only auditor to verify the resulting environment state before the next round. A lightweight AgentAdapter supports interchangeable model and harness backends without modifying their native agent loops. LongHorizon-Harness improves Qwen~3.7-Plus from 51.8% to 80.7% on WeaveBench, from 69.7% to 77.2% on Terminal-Bench~2.1, and from 2.8% to 8.3% on OSWorld~2.0. It also raises Claude Opus~4.7 from 20.0% to 34.3% on an OSWorld2.0 subset, demonstrating consistent gains across models, harnesses, and interaction domains.",
-  "abs_url": "https://arxiv.org/abs/2608.01964",
-  "pdf_url": "https://arxiv.org/pdf/2608.01964v1",
-  "published": "2026-08-03T09:32:21+00:00",
-  "selection_reason": "hf_daily_papers_upvotes=158",
-  "num_pages": 29,
+  "id": "2608.17426",
+  "title": "SemComp-Bench: Benchmarking Semantic Task Completion in Video Generation",
+  "summary": "We introduce Semantic Task Completion Video Generation, an outcome-oriented video generation task. Under this formulation, success requires both achievement of the intended outcome and semantic grounding. Semantic grounding characterizes the correspondence between the reference image and the generated outcome in terms of high-level semantics relevant to the task. Evaluation focuses on the generated outcome and requires neither the presentation of a complete sequence of intermediate task steps nor conventional appearance consistency with the reference image. To support systematic evaluation, we construct SemComp-Data, an evaluation dataset covering six domains. Each instance comprises a reference image, a detailed instruction, a brief instruction, and an outcome-centric video clip. A scalable four-stage curation pipeline converts raw videos into standardized SemComp-Data instances. We further introduce SemComp-Bench, an evaluation protocol that uses a vision-language model (VLM) to answer structured binary questions. SemComp-Bench reports the OA Score and the GR Score for Outcome Achievement and Generation Reliability, respectively. Experiments on representative video generation models show that achieving intended outcomes while maintaining task-relevant semantic grounding in reference images remains challenging.",
+  "abs_url": "https://arxiv.org/abs/2608.17426",
+  "pdf_url": "https://arxiv.org/pdf/2608.17426v1",
+  "published": "2026-08-18T06:45:07+00:00",
+  "selection_reason": "hf_daily_papers_upvotes=155",
+  "num_pages": 22,
   "category": "cs.CV",
-  "published_date": "2026-08-08"
+  "published_date": "2026-08-24"
 }
