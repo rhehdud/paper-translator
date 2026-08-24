@@ -44,6 +44,15 @@ jobs:
 
       - run: pip install -r requirements-translate.txt
 
+      # 의존성 누락 같은 환경 문제는 반드시 여기서 하드 실패시킨다. 아래 "번역·발행·커밋"
+      # 스텝은 translate.py가 0이 아닌 코드로 끝나기만 하면 무조건 "번역 실패(재시도 소진),
+      # 이번 주는 건너뜀"으로 찍고 exit 0 하기 때문에, import 에러조차 초록불 실행으로
+      # 세탁된다 - 실제로 httpx 미선언 때문에 2026-08-15, 08-22 두 주가 아무것도 발행하지
+      # 않은 채 success로 끝났다(조용한 스킵). --help는 모듈 임포트를 다 거친 뒤
+      # NVIDIA_API_KEY 없이도 0으로 끝나므로 임포트 단계 회귀를 정확히 잡아낸다.
+      - name: 번역 스크립트 임포트 스모크 체크
+        run: python src/translate.py --help > /dev/null
+
       - name: 대상 추출 실행 ID 확인
         id: source
         env:

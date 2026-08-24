@@ -1,2 +1,10 @@
 pyyaml
-openai
+# httpx는 translate.py가 직접 import한다(keep-alive를 끈 커스텀 클라이언트를 만들려고).
+# 예전엔 openai<3이 전이 의존성으로 끌어와서 선언 없이도 돌았지만, openai 3.0.0
+# (2026-08-12 릴리스)이 httpx를 httpx2로 갈아치우면서 코드 변경 한 줄 없이
+# ModuleNotFoundError가 났다 - 직접 import하는 건 반드시 직접 선언한다.
+# 메이저 상한도 같은 사고(상류 메이저 릴리스가 조용히 스택을 바꾸는 것)의 재발 방지용.
+# openai 3.3.1 + httpx 0.28 조합은 실제 요청 경로까지 검증했다(전달한 커스텀 클라이언트가
+# 그대로 쓰이고 max_keepalive_connections=0도 유지됨).
+openai<4
+httpx<1
