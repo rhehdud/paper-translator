@@ -1,12 +1,12 @@
 {
-  "id": "2608.01755",
-  "title": "Deferred Exposure of Future Trajectories for Verifiable Reasoning in Autonomous Driving VLMs",
-  "summary": "Recent Vision-Language-Action (VLA) models for autonomous driving (AD) increasingly utilize chain-of-thought (CoT) supervision to enhance the reasoning capabilities of their Vision-Language Model (VLM) components, yet existing annotation pipelines commonly expose the teacher model to the logged ground-truth (GT) future trajectory. We empirically show that this induces trajectory anchoring bias: teacher models rationalize the revealed outcome rather than infer a decision from scene evidence, producing less causally faithful CoTs and substantially more severe hallucinations, especially in causally challenging scenes. Removing the GT trajectory eliminates this shortcut, but open-ended trajectory generation entangles high-level decision-making with precise geometric synthesis and low-level dynamics. To make trajectory-level driving decisions verifiable without requiring open-ended trajectory synthesis, we introduce Autonomous-Driving Multiple-Choice Question (AD-MCQ), which casts planning as selection among explicit trajectory candidates. Taking this a step further, we propose Deferred Exposure of Future Trajectories for RLVR (DEFT-RLVR) to transform future trajectories from pre-decision anchors into post-decision verification targets. Experimental results show that DEFT-RLVR improves AD reasoning while preserving or even enhancing general visual capabilities. With VLM-only inference and controllable difficulty through candidate construction, AD-MCQ provides a flexible, scalable, and extensible foundation for future research on verifiable AD reasoning.",
-  "abs_url": "https://arxiv.org/abs/2608.01755",
-  "pdf_url": "https://arxiv.org/pdf/2608.01755v2",
-  "published": "2026-08-03T06:24:36+00:00",
-  "selection_reason": "hf_daily_papers_upvotes=139",
-  "num_pages": 44,
+  "id": "2608.15089",
+  "title": "StateM: Reaching 95.3% Raw Accuracy, or a \\$15 Frontier Run, on Terminal-Bench 2.1 via Harness Scaling",
+  "summary": "Long-horizon agents can fail even when their underlying models can solve the constituent steps. They may lose track of mutable state, fail to reactivate lessons from earlier executions, skip known procedures, or stop prematurely. We bet on harness scaling to improve the execution system around an agent without changing its model weights. We introduce StateM, an agent-native runtime that organizes execution around durable states, phase-local context, checked transitions, recoverable runbooks, and versioned procedural practices that agents and users can inspect together. On Terminal-Bench 2.1, StateM raises GPT-5.5 xhigh to 92.1\\%, versus 83.1\\% reference and GPT-5.6 Sol Ultra at 91.9\\%. The runbook transfers unchanged to GPT-5.6. With GPT-5.6 Sol xhigh, StateM reaches 95.3\\% raw accuracy across 445 trials and succeeds on all 89 tasks at least once. The frozen profile raises GPT-5.6 Luna from 76.7 to 85.4\\%, above the 84.9\\% Sol xhigh reference. Using the same runtime, runbook structure, and golden rules, less than \\$38 of adaptation raises DeepSeek-V4 Flash from 82.7 to 88.1\\% under standard timeouts and to 89.1\\% on an 88-task common core. Extending only the remaining latency-sensitive task matches the reported 88.8\\% GPT-5.6 Sol max result. Final-score API usage is about \\$15 versus \\$574.68 for the GPT reference; total DeepSeek expenditure is \\$52.22. On BusinessBench, family-specific runbooks built on development sets yield held-out gains of 0.55 macro and 1.34 micro points; two mechanism-matched families improve by 10.04 points. Concrete rules generalize when tasks share execution structure, while the control methodology applies broadly. StateM turns selected postmortem findings into persistent, executable preconditions and practices, making learned controls explicit and enforceable through stateful controls. Code at github.com/henryqin1997/statem.",
+  "abs_url": "https://arxiv.org/abs/2608.15089",
+  "pdf_url": "https://arxiv.org/pdf/2608.15089v1",
+  "published": "2026-08-15T07:16:28+00:00",
+  "selection_reason": "hf_daily_papers_upvotes=435",
+  "num_pages": 26,
   "category": "cs.AI",
-  "published_date": "2026-08-08"
+  "published_date": "2026-08-24"
 }
