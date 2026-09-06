@@ -1,12 +1,12 @@
 {
-  "id": "2608.23283",
-  "title": "Apodex 1.1: Scaling Agentic Intelligence for Complex Work",
-  "summary": "General-purpose language models can reason and synthesize knowledge, but complex work also requires sustained interaction with files, information sources, and executable code, together with state maintenance, failure recovery, and verifiable delivery. We call this \\emph{working capability}: sustained, verifiable progress toward a real-world objective. Apodex 1.1 develops this capability along two complementary dimensions. \\emph{Environment Scaling} expands the diversity and verifiability of executable file, search, and code environments, while \\emph{Agentic Coordination Scaling} trains agents to decompose long-horizon tasks, delegate parallel work, integrate asynchronous results, and replan. A shared execution harness and AgentOS maintain task state and provenance across tools and agents, and training turns environment trajectories and coordination traces into reliable behavior. Across complex professional work, finance, scientific research, mathematics, coding, and search, Apodex 1.1 reaches the leading performance band despite using a substantially smaller model than many frontier systems. The 35B-parameter Apodex 1.1 Mini further retains strong working capability in a locally deployable form. These results ground agentic intelligence in useful, verifiable work completed over time and advance our goal of building a \\emph{Heavy-Duty Solver} for ambitious, long-running tasks.",
-  "abs_url": "https://arxiv.org/abs/2608.23283",
-  "pdf_url": "https://arxiv.org/pdf/2608.23283v2",
-  "published": "2026-08-24T14:07:24+00:00",
-  "selection_reason": "hf_daily_papers_upvotes=200",
-  "num_pages": 46,
+  "id": "2609.04199",
+  "title": "Compile by Training: Turning Natural-Language Specifications into Local Neural Functions",
+  "summary": "Many recurring text functions are easy to describe but difficult to implement with rules, while calling a large remote model for every input introduces repeated cost, latency, and dependency on a provider. We present compile by training, which turns a natural-language specification into a reusable neural function. At compile time, teacher models generate task-specific examples that are used to train a small adapter for a compact interpreter. The resulting function runs without the teachers and can be stored, versioned, and composed like ordinary software. On FuzzyBench-Hard, a subset on which the Program-as-Weights fast compiler produced no exact matches, compile by training reaches 83.6% semantic accuracy. This higher accuracy comes with a higher compile-time cost: roughly a minute rather than seconds for the fast compiler. We deploy the compiler in a public interactive service and demonstrate compiled functions in a multi-site website helper, a language-controlled 3D avatar, and a bidirectional English-Claudish translator.",
+  "abs_url": "https://arxiv.org/abs/2609.04199",
+  "pdf_url": "https://arxiv.org/pdf/2609.04199",
+  "published": "2026-09-03",
+  "selection_reason": "hf_daily_papers_upvotes=268",
+  "num_pages": 10,
   "category": "cs.LG",
-  "published_date": "2026-08-29"
+  "published_date": "2026-09-06"
 }
