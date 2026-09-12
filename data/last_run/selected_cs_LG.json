@@ -1,12 +1,12 @@
 {
-  "id": "2609.04199",
-  "title": "Compile by Training: Turning Natural-Language Specifications into Local Neural Functions",
-  "summary": "Many recurring text functions are easy to describe but difficult to implement with rules, while calling a large remote model for every input introduces repeated cost, latency, and dependency on a provider. We present compile by training, which turns a natural-language specification into a reusable neural function. At compile time, teacher models generate task-specific examples that are used to train a small adapter for a compact interpreter. The resulting function runs without the teachers and can be stored, versioned, and composed like ordinary software. On FuzzyBench-Hard, a subset on which the Program-as-Weights fast compiler produced no exact matches, compile by training reaches 83.6% semantic accuracy. This higher accuracy comes with a higher compile-time cost: roughly a minute rather than seconds for the fast compiler. We deploy the compiler in a public interactive service and demonstrate compiled functions in a multi-site website helper, a language-controlled 3D avatar, and a bidirectional English-Claudish translator.",
-  "abs_url": "https://arxiv.org/abs/2609.04199",
-  "pdf_url": "https://arxiv.org/pdf/2609.04199",
-  "published": "2026-09-03",
-  "selection_reason": "hf_daily_papers_upvotes=268",
-  "num_pages": 10,
+  "id": "2608.12564",
+  "title": "Scaling Automatic Research Agents via World Models",
+  "summary": "Automating empirical research is a long-standing direction of AI. Recent automatic research (AutoResearch) agents bring this goal within reach, as modern LLMs show the capability to independently implement solutions and learn from the execution outcomes. Behind these gains, post-training (especially RL) plays a central role. In this paper, we identify a fundamental tension when scaling RL for these agents: the two components of every AutoResearch trajectory (agent generation and environment execution) scale in very different manners, since all generation shares compute through batching, while each execution occupies its exclusive sandbox and real machine time. As a result, the environment execution dominates the training cost and becomes the bottleneck as trajectories grow. To resolve this tension, we propose World Model RL (WMRL), which replaces environment execution with a world model to remove this bottleneck. Additionally, the world model can be imperfect, as its rewards are corrupted by bias and noise. Therefore, we further equip WMRL with two mitigations, Online Debiasing and Inverse-Variance Denoising, which offset the bias and suppress the noise respectively. Theoretically, we prove that both mitigations of WMRL strictly improve the convergence guarantee. Empirically, WMRL accelerates training by 3-4x on various tasks at different agent scales, while exceeding the performance of standard RL baselines. Moreover, our post-trained 4B and 9B agents outperform much larger open-weight agents of 48B and 120B on held-out benchmarks. Beyond AutoResearch, WMRL also transfers to post-training embodied VLA policies, which demonstrates the generalizability of our method.",
+  "abs_url": "https://arxiv.org/abs/2608.12564",
+  "pdf_url": "https://arxiv.org/pdf/2608.12564",
+  "published": "2026-09-10",
+  "selection_reason": "hf_daily_papers_upvotes=437",
+  "num_pages": 33,
   "category": "cs.LG",
-  "published_date": "2026-09-06"
+  "published_date": "2026-09-12"
 }
